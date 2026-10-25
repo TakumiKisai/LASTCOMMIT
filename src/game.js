@@ -14,6 +14,9 @@ const CONFIGS = {
   pre: { name: 'PRECISION', maxBW: 100, cost: 25, cd: 480, spread: 0, recoil: 540, shotDmg: 2, bashDmg: 0.6, pogo: 480, stagger: 1200, life: 1400, desc: 'exact 2-dmg shots | weak Bash that stuns | slow fire' },
 };
 const KERN = { fw: 78, fh: 53, ay: 50, cols: 7, rows: {idle: 0, walk: 1, run: 2, jump: 3, fall: 4, land: 5, bash: 6, dbash: 7, shoot_up: 8, shoot_side: 9, shoot_down: 10, parry: 11, dmg: 12}, n: {idle: 4, walk: 6, run: 7, jump: 4, fall: 3, land: 3, bash: 4, dbash: 5, shoot_up: 4, shoot_side: 4, shoot_down: 3, parry: 4, dmg: 5} };
+const GUN_S = 0.42;
+const WEAPONS = { std: { px: 9.4, py: 23.0, tx: 46, ty: 21.5 }, pre: { px: 9.8, py: 17.0, tx: 46, ty: 19.0 }, bay: { px: 9.1, py: 24.0, tx: 46, ty: 23.0 } };
+const HAND = { 57: [41, 26], 58: [41, 26], 63: [39, 28], 64: [39, 28], 65: [39, 28], 70: [37, 31], 71: [37, 31], carry: [45, 31] };
 const TEAL = 0x2fe0c8, MID = 0x1d2631, ORG = 0xff8a3d;
 const Rect = Phaser.Geom.Rectangle;
 const hit = (a, b) => Phaser.Geom.Intersects.RectangleToRectangle(a, b);
@@ -21,7 +24,7 @@ const hit = (a, b) => Phaser.Geom.Intersects.RectangleToRectangle(a, b);
 class Main extends Phaser.Scene {
   constructor() { super('main'); }
 
-  preload() { this.load.spritesheet('kernsheet', 'assets/kern/kern.png', { frameWidth: KERN.fw, frameHeight: KERN.fh }); }
+  preload() { this.load.spritesheet('kernsheet', 'assets/kern/kern.png', { frameWidth: KERN.fw, frameHeight: KERN.fh }); ['std', 'bay', 'pre'].forEach(k => this.load.image('lw_' + k, 'assets/weapons/lastwords_' + k + '.png')); }
 
   create() {
     const cam = this.cameras.main, W = 2800, H = 720, kb = this.input.keyboard;
@@ -34,7 +37,7 @@ class Main extends Phaser.Scene {
     this.input.on('pointerdown', p => { if (p.rightButtonDown()) this.wantBash = true; });
     this.k = {}; for (const n in KEYS) this.k[n] = KEYS[n].map(c => kb.addKey(c));
     this.numK = ['ONE', 'TWO', 'THREE'].map(c => kb.addKey(c)); this.escK = kb.addKey('ESC');
-    this.tex(); this.kernAnims(); this.level(); this.spawn(); this.makeHud();
+    this.tex(); this.kernAnims(); ['std', 'bay', 'pre'].forEach(k => this.textures.get('lw_' + k).setFilter(Phaser.Textures.FilterMode.LINEAR)); this.level(); this.spawn(); this.makeHud();
     cam.startFollow(this.P, true, 0.12, 0.12); cam.setFollowOffset(0, 30); cam.fadeIn(300);
   }
 
@@ -69,7 +72,6 @@ class Main extends Phaser.Scene {
     ker('k_r0', 0, [0, 27, 5], [11, 26, 4]); ker('k_r1', 1, [4, 28, 4], [9, 28, 4]); ker('k_r2', 0, [11, 26, 4], [2, 27, 5]);
     ker('k_j', 0, [3, 26, 4], [10, 25, 4]); ker('k_f', 0, [0, 27, 5], [13, 27, 5]);
     const an = (key, fr, rate) => { if (!this.anims.exists(key)) this.anims.create({ key, frames: fr.map(k => ({ key: k })), frameRate: rate, repeat: -1 }); };
-    an('idle', ['k_i0', 'k_i1'], 2); an('run', ['k_r0', 'k_r1', 'k_r2', 'k_r1'], 11); an('jump', ['k_j'], 1); an('fall', ['k_f'], 1);
     const cres = (g, R, W, col, al) => {
       const pts = [];
       for (let i = 0; i <= 14; i++) { const a = (i / 7 - 1) * 0.75; pts.push({ x: 4 + R * Math.cos(a), y: 36 + R * Math.sin(a) }); }
@@ -122,7 +124,7 @@ class Main extends Phaser.Scene {
     P.body.setSize(14, 30).setOffset(2, 2).setMaxVelocity(TUNE.maxVel, 900); P.setCollideWorldBounds(true); P.setVisible(false);
     this.vis = this.add.sprite(P.x, P.y + 16, 'kernsheet', 0).setOrigin(0.5, KERN.ay / KERN.fh).setDepth(4).play('idle');
     this.head = this.add.text(0, 0, '$', { fontFamily: 'monospace', fontSize: '11px', fontStyle: 'bold', color: '#2fe0c8' }).setOrigin(0.5).setDepth(5);
-    this.gunS = this.add.sprite(0, 0, 'gun_' + this.cfgKey).setOrigin(0.1, 0.5).setDepth(5);
+    this.gunS = this.add.sprite(0, 0, 'lw_' + this.cfgKey).setDepth(5);
     this.fx = this.add.graphics().setDepth(6); this.eg = this.add.graphics().setDepth(7);
     this.bullets = this.physics.add.group({ allowGravity: false }); this.bolts = this.physics.add.group({ allowGravity: false });
     const ph = this.physics.add;
@@ -206,7 +208,16 @@ class Main extends Phaser.Scene {
     V.anims.timeScale = !acting && (an === 'run' || an === 'walk') ? Phaser.Math.Clamp(spd / (an === 'run' ? TUNE.run : TUNE.walk), 0.6, 1.4) : 1;
     this.lean -= this.lean * Math.min(1, 10 * dt);
     V.setPosition(P.x, P.y + 16).setFlipX(wl).setAngle(this.lean).setAlpha(t < this.inv && Math.floor(t / 80) % 2 ? 0.4 : 1);
-    this.head.setVisible(false); this.gunS.setVisible(false);
+    this.head.setVisible(false);
+    const hh = HAND[V.frame.name] || HAND.carry, fl = V.flipX ? -1 : 1, WP = WEAPONS[this.cfgKey];
+    const hx = V.x + (hh[0] - KERN.fw / 2) * fl, hy = V.y + hh[1] - KERN.ay;
+    const gA = Math.atan2(ptr.worldY - hy, ptr.worldX - hx), gL = Math.abs(gA) > Math.PI / 2, kk = this.kick;
+    this.kick = Math.max(0, this.kick - 50 * dt);
+    const showGun = !(acting && ['bash', 'dbash', 'rebound', 'parry', 'dmg', 'ko'].includes(this.act.k));
+    this.gunS.setVisible(showGun).setScale(GUN_S).setOrigin(WP.px / 48, WP.py / 48).setPosition(hx - Math.cos(gA) * kk, hy - Math.sin(gA) * kk).setRotation(gA).setFlipY(gL);
+    const tv = new Phaser.Math.Vector2((WP.tx - WP.px) * GUN_S, (WP.ty - WP.py) * GUN_S * (gL ? -1 : 1)).rotate(gA);
+    this.muzzle = { x: hx + tv.x, y: hy + tv.y, a: gA };
+    if (this.cfgKey === 'pre' && showGun) f.lineStyle(1, TEAL, 0.3).lineBetween(this.muzzle.x, this.muzzle.y, this.muzzle.x + Math.cos(gA) * 220, this.muzzle.y + Math.sin(gA) * 220);
 
     // world interactions
     const pb = this.pb();
@@ -236,15 +247,16 @@ class Main extends Phaser.Scene {
     this.shotCd = t + c.cd;
     if (this.bw < c.cost) { this.noBw = t + 300; this.shotCd = t + 200; return; }
     this.bw -= c.cost;
-    const a = ang + Phaser.Math.FloatBetween(-c.spread, c.spread), dx = Math.cos(a), dy = Math.sin(a), mx = x + dx * 34, my = y + dy * 34;
+    const m0 = this.muzzle || { x: x + Math.cos(ang) * 34, y: y + Math.sin(ang) * 34, a: ang };
+    const a = m0.a + Phaser.Math.FloatBetween(-c.spread, c.spread), dx = Math.cos(a), dy = Math.sin(a), mx = m0.x, my = m0.y;
     const bl = this.physics.add.sprite(mx - dx * 6, my - dy * 6, 'bullet').setRotation(a).setDepth(5).setBlendMode(Phaser.BlendModes.ADD); this.bullets.add(bl);
     bl.body.setSize(8, 8).setAllowGravity(false).setVelocity(dx * 950, dy * 950);
     this.time.delayedCall(c.life, () => bl.active && bl.destroy());
     if (Math.abs(dx) > 0.25) b.velocity.x = -dx * c.recoil;
     if (Math.abs(dy) > 0.25) b.velocity.y = -dy * c.recoil;
     this.recoilUntil = t + 170; this.jumping = false; this.kick = 7;
-    const el = Math.atan2(dy, Math.abs(dx)); this.playAct(el < -0.9 ? 'up' : el > 0.9 ? 'down' : 'side', 230); this.lean = Math.abs(dy) < 0.8 ? -dx * 14 : 0;
-    const m = this.add.image(mx, my, 'flash').setOrigin(0, 0.5).setRotation(a).setDepth(6).setBlendMode(Phaser.BlendModes.ADD); this.tweens.add({ targets: m, scaleX: 1.6, scaleY: 0.4, alpha: 0, duration: 110, onComplete: () => m.destroy() }); this.burst(mx, my, 0xfff0b0, 4);
+    const el = Math.atan2(dy, Math.abs(dx)); this.playAct(el < -0.55 ? 'up' : el > 0.55 ? 'down' : 'side', 190); this.lean = Math.abs(dy) < 0.8 ? -dx * 14 : 0;
+    const m = this.add.image(mx, my, 'flash').setTint({ std: 0xffffff, bay: 0xffb070, pre: 0x7ff0ff }[this.cfgKey]).setOrigin(0, 0.5).setRotation(a).setDepth(6).setBlendMode(Phaser.BlendModes.ADD); this.tweens.add({ targets: m, scaleX: 1.6, scaleY: 0.4, alpha: 0, duration: 110, onComplete: () => m.destroy() }); this.burst(mx, my, 0xfff0b0, 4);
     this.cameras.main.shake(60, 0.003);
   }
 
@@ -339,7 +351,7 @@ class Main extends Phaser.Scene {
     A('idle', 'idle', 5, -1); A('walk', 'walk', 10, -1); A('run', 'run', 14, -1);
     A('jump', 'jump', 16); A('fall', 'fall', 10, -1); A('land', 'land', 24);
     A('bash', 'bash', 22); A('dbash', 'dbash', 18, 0, [0, 1]); A('rebound', 'dbash', 14, 0, [2, 3, 4]);
-    A('up', 'shoot_up', 22); A('side', 'shoot_side', 22); A('down', 'shoot_down', 20);
+    A('up', 'shoot_up', 22, 0, [1, 2]); A('side', 'shoot_side', 22, 0, [0, 1, 2]); A('down', 'shoot_down', 20, 0, [0, 1]);
     A('parry', 'parry', 24); A('dmg', 'dmg', 14, 0, [0, 1, 2, 3]); A('ko', 'dmg', 1, 0, [4]);
   }
 
@@ -397,7 +409,7 @@ class Main extends Phaser.Scene {
     nums.forEach((d, i) => {
       if (!d) return;
       this.cfgKey = ks[i]; this.cfg = CONFIGS[ks[i]]; this.registry.set('cfg', ks[i]);
-      this.bw = Math.min(this.bw, this.cfg.maxBW); this.gunS.setTexture('gun_' + ks[i]); this.showMenu();
+      this.bw = Math.min(this.bw, this.cfg.maxBW); this.gunS.setTexture('lw_' + ks[i]); this.showMenu();
     });
     if (close) { this.menu = false; this.menuT.setVisible(false); this.physics.resume(); }
   }
