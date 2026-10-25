@@ -1,32 +1,19 @@
 # LAST COMMIT - gameplay prototype
-Phaser 3 + Vite, plain JavaScript. Placeholder graphics, no audio. Desktop browser, keyboard + mouse.
+Phaser 3 + Vite, plain JavaScript. Desktop (keyboard + mouse) and touch. Music: Disconnected (title), The Last Compile (dungeon).
 
 ## Run
     npm install
     npm run dev      # http://localhost:5173
     npm run build    # production build in dist/
 
-## Controls (rebind in KEYS, top of src/game.js)
-A/D or arrows move | Space jump | Shift run (only inside the RUN ZONE) | Mouse aim | LMB shoot (recoil launches you the opposite way)
-RMB or K bash | hold S/Down in the air + Bash = downward pogo (enemies, ground, spikes) | L parry | E workbench / close menu | R reset
+## Controls (rebind in-game: Title > CONTROLS; defaults in src/shared.js)
+A/D or arrows move | Space jump | Shift run (RUN ZONES only) | Mouse aim, LMB shoot (recoil launches you the opposite way) | RMB or K bash
+hold S/Down in the air + Bash = downward pogo | F parry (rebindable) | E workbench | R reset expedition
+Touch: D-pad bottom-left, JUMP / BASH / PARRY bottom-right, drag on the right half to aim and fire (aim down in the air + BASH = pogo).
 
-## Implemented
-Movement (coyote time, jump buffer, variable jump), context run zone, Bash + downward pogo, 360-degree aimed recoil shooting,
-Bandwidth meter (shots cost it, Bash does not, +10/s while grounded, fruit pickups), parry with timing window,
-3 LAST WORDS configs at the workbench (Standard / Bayonet / Precision) with real stat differences that persist through death,
-2 enemy types (lunger, turret) with readable windups, spikes/pits that reset you to your last safe ground,
-one test level with a gap that needs running, pogo nodes leading to a secret platform, death + respawn.
+## Dungeon
+Entrance (workbench) > room 1 > run corridor (380px gap) > armored guard (only damageable while stunned: parry it) > CHECKPOINT > climb (hanging spike pods = pogo) > EXIT.
+Checkpoint = exact snapshot (Bandwidth, HP, pickups, kills). Dying rewinds to it; the weapon loadout is permanent and survives.
 
-## Temporary decisions (all tunable)
-Bandwidth regenerates only while grounded; parry costs 0 Bandwidth; Bayonet's "lower ammo capacity" = 70 max Bandwidth + pricier shots;
-Precision's "stagger" = Bash stuns and interrupts enemy windups; hazards cost 1 HP and send you to your last safe ground.
-
-## Tuning (top of src/game.js)
-TUNE: walk, run, jump, gravity, enemyHp, bashCdMs, parryWindowMs, parryCost, bwRegenGrounded.
-CONFIGS: per weapon - recoil (recoil strength), bashDmg, pogo (Bash launch force), cost (Bandwidth per shot), maxBW, spread, stagger.
-Enemy health is TUNE.enemyHp. Bash force = CONFIGS[x].pogo.
-
-## Known bugs / unfinished
-Not playtested in a browser by the author of this build (only syntax-checked) - expect rough edges.
-No sound. Art is procedurally generated placeholder sprites (run/idle/jump/fall frames, slash, tracers, impact sparks). Mouse aim only. No upward Bash.
-No extraction/return system, no ENTITY presentation. Enemy AI is basic and can be pogo-spammed. Parry effects beyond "negate" are not built.
+## Known gaps
+Not run in a browser by the author of this pass (syntax-checked only). Touch can't open the workbench menu yet. No temporary upgrades exist yet to snapshot.

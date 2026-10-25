@@ -1,81 +1,87 @@
-// LAST COMMIT gameplay prototype (Phaser 3). Tunables: TUNE, CONFIGS, KEYS.
+// LAST COMMIT: Phaser 3 prototype. Scenes: Boot -> Title (investigation board) -> Main (dungeon). Controls scene = rebinding.
+import { KEYS, KERN, loadKeys, beep, playMusic } from './shared.js';
+import { Title, Controls } from './title.js';
+import { Touch } from './touch.js';
+loadKeys();
+
 const TUNE = {
-  gravity: 1200, walk: 250, run: 430, accelGround: 3200, accelAir: 1500,
-  jump: 470, jumpCut: 0.45, coyoteMs: 90, bufferMs: 100, maxVel: 720,
-  hp: 5, invMs: 1000, enemyHp: 3, lungeSpeed: 380, boltSpeed: 260,
-  bashCdMs: 320, bashMs: 110,
-  parryWindowMs: 150, parryCdMs: 550, parryCost: 0,
-  bwRegenGrounded: 10,
+  gravity: 1200, walk: 280, run: 480, accelGround: 3600, accelAir: 1700, jump: 520, jumpCut: 0.45, coyoteMs: 90, bufferMs: 100, maxVel: 820,
+  hp: 5, invMs: 1000, enemyHp: 3, lungeSpeed: 420, boltSpeed: 280, bashCdMs: 320, bashMs: 110,
+  parryWindowMs: 170, parryCdMs: 550, parryCost: 0, bwRegenGrounded: 10,
 };
-const KEYS = { left: ['A', 'LEFT'], right: ['D', 'RIGHT'], up: ['W', 'UP'], down: ['S', 'DOWN'], jump: ['SPACE'], bash: ['K'], parry: ['L'], run: ['SHIFT'], interact: ['E'], restart: ['R'] };
+const BODY = { w: 18, h: 44 }, GY = 640; // collision box (art is ~66px tall; hat/head poke above the box on purpose)
 const CONFIGS = {
-  std: { name: 'STANDARD', maxBW: 100, cost: 20, cd: 220, spread: 0.05, recoil: 430, shotDmg: 1, bashDmg: 1, pogo: 520, stagger: 150, life: 700, desc: 'balanced' },
-  bay: { name: 'BAYONET', maxBW: 70, cost: 28, cd: 240, spread: 0.2, recoil: 430, shotDmg: 1, bashDmg: 2, pogo: 640, stagger: 300, life: 500, desc: '2x Bash dmg, huge pogo | wild spread, 70 BW cap' },
-  pre: { name: 'PRECISION', maxBW: 100, cost: 25, cd: 480, spread: 0, recoil: 540, shotDmg: 2, bashDmg: 0.6, pogo: 480, stagger: 1200, life: 1400, desc: 'exact 2-dmg shots | weak Bash that stuns | slow fire' },
+  std: { name: 'STANDARD', maxBW: 100, cost: 20, cd: 220, spread: 0.05, recoil: 480, shotDmg: 1, bashDmg: 1, pogo: 580, stagger: 150, life: 700, desc: 'balanced' },
+  bay: { name: 'BAYONET', maxBW: 70, cost: 28, cd: 240, spread: 0.2, recoil: 480, shotDmg: 1, bashDmg: 2, pogo: 700, stagger: 300, life: 500, desc: '2x Bash dmg, huge pogo | wild spread, 70 BW cap' },
+  pre: { name: 'PRECISION', maxBW: 100, cost: 25, cd: 480, spread: 0, recoil: 600, shotDmg: 2, bashDmg: 0.6, pogo: 530, stagger: 1200, life: 1400, desc: 'exact 2-dmg shots | weak Bash that stuns | slow fire' },
 };
-const KERN = { fw: 78, fh: 53, ay: 50, cols: 7, rows: {idle: 0, walk: 1, run: 2, jump: 3, fall: 4, land: 5, bash: 6, dbash: 7, shoot_up: 8, shoot_side: 9, shoot_down: 10, parry: 11, dmg: 12}, n: {idle: 4, walk: 6, run: 7, jump: 4, fall: 3, land: 3, bash: 4, dbash: 5, shoot_up: 4, shoot_side: 4, shoot_down: 3, parry: 4, dmg: 5} };
-const GUN_S = 0.42;
+// Revolver is drawn only while firing. Shoulder = fixed offset from Kern's feet (source-art units, scaled by KERN.k); the arm reaches
+// from the shoulder toward the aim point, the gun's grip pivot sits in the glove and the muzzle comes from the sprite, so the gun can
+// never drift from the hand in any animation or direction.
+const GUN_S = 0.6, ARM = 12, SHO = [4, -27];
 const WEAPONS = { std: { px: 9.4, py: 23.0, tx: 46, ty: 21.5 }, pre: { px: 9.8, py: 17.0, tx: 46, ty: 19.0 }, bay: { px: 9.1, py: 24.0, tx: 46, ty: 23.0 } };
-const HAND = { 57: [41, 26], 58: [41, 26], 63: [39, 28], 64: [39, 28], 65: [39, 28], 70: [37, 31], 71: [37, 31], carry: [45, 31] };
-const TEAL = 0x2fe0c8, MID = 0x1d2631, ORG = 0xff8a3d;
-const Rect = Phaser.Geom.Rectangle;
-const hit = (a, b) => Phaser.Geom.Intersects.RectangleToRectangle(a, b);
+const TEAL = 0x2fe0c8, MID = 0x1d2631, ORG = 0xff8a3d, BLOCK = ['bash', 'dbash', 'rebound', 'parry', 'dmg', 'ko'];
+const Rect = Phaser.Geom.Rectangle, hit = (a, b) => Phaser.Geom.Intersects.RectangleToRectangle(a, b);
+
+class Boot extends Phaser.Scene {
+  constructor() { super('Boot'); }
+  preload() {
+    const t = this.add.text(480, 270, 'LOADING', { fontFamily: 'monospace', fontSize: '18px', color: '#2fe0c8' }).setOrigin(0.5);
+    this.load.on('progress', v => t.setText('LOADING ' + Math.round(v * 100) + '%'));
+    this.load.spritesheet('kernsheet', 'assets/kern/kern.png', { frameWidth: KERN.fw, frameHeight: KERN.fh });
+    ['std', 'bay', 'pre'].forEach(k => this.load.image('lw_' + k, 'assets/weapons/lastwords_' + k + '.png'));
+    this.load.audio('disc', 'assets/audio/disconnected.mp3');
+  }
+  create() {
+    Main.prototype.tex.call(this); Main.prototype.kernAnims.call(this);
+    ['std', 'bay', 'pre'].forEach(k => this.textures.get('lw_' + k).setFilter(Phaser.Textures.FilterMode.LINEAR));
+    this.scene.start('Title');
+  }
+}
 
 class Main extends Phaser.Scene {
-  constructor() { super('main'); }
-
-  preload() { this.load.spritesheet('kernsheet', 'assets/kern/kern.png', { frameWidth: KERN.fw, frameHeight: KERN.fh }); ['std', 'bay', 'pre'].forEach(k => this.load.image('lw_' + k, 'assets/weapons/lastwords_' + k + '.png')); }
+  constructor() { super('Main'); }
+  preload() {
+    if (this.cache.audio.exists('compile')) return;
+    const t = this.add.text(480, 270, 'LOADING', { fontFamily: 'monospace', fontSize: '18px', color: '#2fe0c8' }).setOrigin(0.5);
+    this.load.on('progress', v => t.setText('LOADING ' + Math.round(v * 100) + '%'));
+    this.load.audio('compile', 'assets/audio/the-last-compile.mp3');
+  }
 
   create() {
-    const cam = this.cameras.main, W = 2800, H = 720, kb = this.input.keyboard;
+    const cam = this.cameras.main, W = 3600, H = 800, kb = this.input.keyboard, snap = this.registry.get('snap');
     this.cfgKey = this.registry.get('cfg') || 'std'; this.cfg = CONFIGS[this.cfgKey];
-    Object.assign(this, { bw: this.cfg.maxBW, hp: TUNE.hp, now: 0, inv: 0, hurtUntil: 0, recoilUntil: 0, shotCd: 0, bashCd: 0, parryUntil: 0, parryCd: 0,
-      coyote: 0, jbuf: 0, jumping: false, curMax: TUNE.walk, gT: 0, safe: { x: 120, y: 560 }, bashS: null, dead: false, menu: false, wantBash: false, noBw: 0, stopped: false, kick: 0, wasG: false, lastVy: 0, act: null, lean: 0 });
-    this.physics.world.setBounds(0, 0, W, 1200);
-    cam.setBounds(0, 0, W, H).setBackgroundColor('#0a0e13');
-    this.input.mouse.disableContextMenu();
-    this.input.on('pointerdown', p => { if (p.rightButtonDown()) this.wantBash = true; });
+    Object.assign(this, { bw: Math.min(this.cfg.maxBW, snap ? snap.bw : 999), hp: snap ? snap.hp : TUNE.hp, now: 0, inv: 0, hurtUntil: 0, recoilUntil: 0, shotCd: 0, bashCd: 0, parryUntil: 0, parryCd: 0,
+      coyote: 0, jbuf: 0, jumping: false, curMax: TUNE.walk, gT: 0, bashS: null, dead: false, won: false, menu: false, wantBash: false, noBw: 0, stopped: false, kick: 0, wasG: false, lastVy: 0,
+      act: null, lean: 0, gunUntil: 0, faceLeft: false, cp: !!snap, picked: new Set(snap ? snap.picked : []), killed: new Set(snap ? snap.killed : []) });
+    this.safe = snap ? { x: snap.x, y: snap.y } : { x: 120, y: GY - 30 };
+    this.physics.world.setBounds(0, 0, W, 1400); cam.setBounds(0, 0, W, H).setBackgroundColor('#0a0e13');
+    this.input.mouse.disableContextMenu(); this.input.on('pointerdown', p => { if (p.rightButtonDown()) this.wantBash = true; });
     this.k = {}; for (const n in KEYS) this.k[n] = KEYS[n].map(c => kb.addKey(c));
     this.numK = ['ONE', 'TWO', 'THREE'].map(c => kb.addKey(c)); this.escK = kb.addKey('ESC');
-    this.tex(); this.kernAnims(); ['std', 'bay', 'pre'].forEach(k => this.textures.get('lw_' + k).setFilter(Phaser.Textures.FilterMode.LINEAR)); this.level(); this.spawn(); this.makeHud();
-    cam.startFollow(this.P, true, 0.12, 0.12); cam.setFollowOffset(0, 30); cam.fadeIn(300);
+    this.touch = new Touch(this);
+    this.tex(); this.kernAnims(); this.level(); this.spawn(); this.makeHud();
+    playMusic(this, 'compile', 0.45);
+    cam.startFollow(this.P, true, 0.12, 0.12); cam.setFollowOffset(0, 40); cam.fadeIn(300);
   }
 
   tex() {
     const mk = (k, w, h, f) => { if (this.textures.exists(k)) return; const g = this.add.graphics(); f(g); g.generateTexture(k, w, h); g.destroy(); };
-    mk('kern', 18, 32, g => {
-      g.fillStyle(0x0b0b10).fillRect(0, 5, 18, 2).fillRect(3, 0, 12, 6); g.fillStyle(TEAL).fillRect(3, 4, 12, 1);
-      g.fillStyle(MID).fillRect(3, 7, 12, 10).lineStyle(1, TEAL).strokeRect(3.5, 7.5, 11, 9);
-      g.fillStyle(0x2a3644).fillRect(2, 17, 14, 15).fillStyle(TEAL).fillRect(8, 20, 2, 5).fillStyle(0x0b0b10).fillRect(3, 28, 5, 4).fillRect(10, 28, 5, 4);
+    const U = 1.5, R = (g, x, y, w, h) => g.fillRect(Math.round(x * U), Math.round(y * U), Math.max(1, Math.round(w * U)), Math.max(1, Math.round(h * U)));
+    mk('spike', 16, 12, g => { g.fillStyle(0xff5a4a).fillTriangle(0, 12, 8, 0, 16, 12).fillStyle(0xffb0a0).fillTriangle(8, 0, 10, 6, 8, 6); });
+    mk('panel', 32, 32, g => { g.fillStyle(0x18212b).fillRect(0, 0, 32, 32).lineStyle(1, 0x253544).strokeRect(0.5, 0.5, 31, 31).fillStyle(0x2c4151).fillRect(3, 3, 2, 2).fillRect(27, 3, 2, 2).fillRect(3, 27, 2, 2).fillRect(27, 27, 2, 2).fillStyle(0x10171e).fillRect(8, 14, 16, 4); });
+    mk('sky', 480, 540, g => {
+      let x = 0;
+      while (x < 480) {
+        const w = Math.min(Phaser.Math.Between(30, 70), 480 - x), h = Phaser.Math.Between(120, 360); g.fillStyle(0x0d151c).fillRect(x, 540 - h, w, h); g.fillStyle(0x16323a);
+        for (let y = 540 - h + 10; y < 520; y += 14) for (let wx = x + 5; wx < x + w - 6; wx += 9) if (Math.random() < 0.18) g.fillRect(wx, y, 3, 5);
+        x += w + Phaser.Math.Between(0, 8);
+      }
     });
-    const gun = (k, f) => mk(k, 42, 10, g => {
-      g.fillStyle(0x59636f).fillRect(8, 2, 28, 3).fillStyle(0x8e99a6).fillRect(8, 2, 28, 1).fillStyle(0x262c34).fillRect(1, 3, 12, 5).fillRect(1, 6, 5, 4).fillStyle(TEAL).fillRect(14, 3, 12, 1);
-      if (f) f(g);
-    });
-    gun('gun_std'); gun('gun_bay', g => g.fillStyle(0xdce9ee).fillTriangle(22, 5, 40, 5, 22, 9));
-    gun('gun_pre', g => g.fillStyle(0x262c34).fillRect(14, 0, 14, 2).fillStyle(TEAL).fillRect(27, 0, 2, 2));
-    mk('enemy', 22, 26, g => { g.fillStyle(0x3a1f14).fillRect(0, 0, 22, 26).fillStyle(ORG).fillRect(2, 2, 18, 22).fillStyle(0xffe9c0).fillRect(5, 7, 5, 5).fillRect(13, 7, 5, 5); });
-    mk('turret', 24, 20, g => { g.fillStyle(0x3a1f14).fillRect(0, 0, 24, 20).fillStyle(ORG).fillRect(2, 2, 20, 12).fillStyle(0xffe9c0).fillRect(9, 5, 6, 6); });
-    mk('spike', 16, 12, g => { g.fillStyle(0xff5a4a).fillTriangle(0, 12, 8, 0, 16, 12); }); this.tex2();
-  }
-
-  tex2() {
-    const mk = (k, w, h, f) => { if (this.textures.exists(k)) return; const g = this.add.graphics(); f(g); g.generateTexture(k, w, h); g.destroy(); };
-    const ker = (k, bob, l, r) => mk(k, 18, 32, g => {
-      g.fillStyle(0x0b0b10).fillRect(0, 5 + bob, 18, 2).fillRect(3, bob, 12, 6); g.fillStyle(TEAL).fillRect(3, 4 + bob, 12, 1);
-      g.fillStyle(MID).fillRect(3, 7 + bob, 12, 10).lineStyle(1, TEAL).strokeRect(3.5, 7.5 + bob, 11, 9);
-      g.fillStyle(0x2a3644).fillRect(2, 17 + bob, 14, 10).fillStyle(TEAL).fillRect(8, 19 + bob, 2, 5);
-      g.fillStyle(0x0b0b10).fillRect(l[0], l[1], 5, l[2]).fillRect(r[0], r[1], 5, r[2]);
-      g.fillStyle(TEAL).fillRect(l[0], l[1] + l[2] - 1, 5, 1).fillRect(r[0], r[1] + r[2] - 1, 5, 1);
-    });
-    ker('k_i0', 0, [3, 27, 5], [10, 27, 5]); ker('k_i1', 1, [3, 28, 4], [10, 28, 4]);
-    ker('k_r0', 0, [0, 27, 5], [11, 26, 4]); ker('k_r1', 1, [4, 28, 4], [9, 28, 4]); ker('k_r2', 0, [11, 26, 4], [2, 27, 5]);
-    ker('k_j', 0, [3, 26, 4], [10, 25, 4]); ker('k_f', 0, [0, 27, 5], [13, 27, 5]);
-    const an = (key, fr, rate) => { if (!this.anims.exists(key)) this.anims.create({ key, frames: fr.map(k => ({ key: k })), frameRate: rate, repeat: -1 }); };
-    const cres = (g, R, W, col, al) => {
+    const cres = (g, r0, W, col, al) => {
       const pts = [];
-      for (let i = 0; i <= 14; i++) { const a = (i / 7 - 1) * 0.75; pts.push({ x: 4 + R * Math.cos(a), y: 36 + R * Math.sin(a) }); }
-      for (let i = 14; i >= 0; i--) { const u = i / 7 - 1, a = u * 0.75, r = R - W * (1 - u * u); pts.push({ x: 4 + r * Math.cos(a), y: 36 + r * Math.sin(a) }); }
+      for (let i = 0; i <= 14; i++) { const a = (i / 7 - 1) * 0.75; pts.push({ x: 4 + r0 * Math.cos(a), y: 36 + r0 * Math.sin(a) }); }
+      for (let i = 14; i >= 0; i--) { const u = i / 7 - 1, a = u * 0.75, r = r0 - W * (1 - u * u); pts.push({ x: 4 + r * Math.cos(a), y: 36 + r * Math.sin(a) }); }
       g.fillStyle(col, al).fillPoints(pts, true);
     };
     mk('slash', 60, 72, g => { cres(g, 44, 24, TEAL, 0.5); cres(g, 44, 16, 0xaafff0, 0.85); cres(g, 44, 8, 0xffffff, 1); });
@@ -84,47 +90,75 @@ class Main extends Phaser.Scene {
     mk('spark', 24, 24, g => { g.fillStyle(0xffffff).fillTriangle(12, 0, 15, 12, 9, 12).fillTriangle(12, 24, 15, 12, 9, 12).fillTriangle(0, 12, 12, 9, 12, 15).fillTriangle(24, 12, 12, 9, 12, 15); });
     mk('flash', 28, 16, g => { g.fillStyle(TEAL, 0.5).fillTriangle(0, 8, 28, 0, 28, 16).fillStyle(0xfff0b0).fillTriangle(0, 8, 22, 4, 22, 12).fillStyle(0xffffff).fillTriangle(0, 8, 12, 6, 12, 10); });
     mk('dot', 4, 4, g => { g.fillStyle(0xffffff).fillRect(0, 0, 4, 4); });
-    mk('panel', 32, 32, g => { g.fillStyle(0x18212b).fillRect(0, 0, 32, 32).lineStyle(1, 0x253544).strokeRect(0.5, 0.5, 31, 31).fillStyle(0x2c4151).fillRect(3, 3, 2, 2).fillRect(27, 3, 2, 2).fillRect(3, 27, 2, 2).fillRect(27, 27, 2, 2).fillStyle(0x10171e).fillRect(8, 14, 16, 4); });
-    mk('sky', 480, 540, g => {
-      let x = 0;
-      while (x < 480) {
-        const w = Math.min(Phaser.Math.Between(30, 70), 480 - x), h = Phaser.Math.Between(120, 360);
-        g.fillStyle(0x0d151c).fillRect(x, 540 - h, w, h); g.fillStyle(0x16323a);
-        for (let y = 540 - h + 10; y < 520; y += 14) for (let wx = x + 5; wx < x + w - 6; wx += 9) if (Math.random() < 0.18) g.fillRect(wx, y, 3, 5);
-        x += w + Phaser.Math.Between(0, 8);
-      }
+    if (!this.textures.exists('glow')) {
+      const c = this.textures.createCanvas('glow', 64, 64), x = c.getContext(), r = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+      r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.35, 'rgba(255,255,255,0.35)'); r.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = r; x.fillRect(0, 0, 64, 64); c.refresh();
+    }
+    mk('bench', 64, 44, g => {
+      g.fillStyle(0x10161d).fillRect(2, 24, 60, 6).fillRect(6, 30, 5, 14).fillRect(53, 30, 5, 14).fillStyle(0x2c4151).fillRect(2, 24, 60, 2);
+      g.fillStyle(0x0b0f14).fillRect(10, 2, 30, 20).lineStyle(1, TEAL).strokeRect(10.5, 2.5, 29, 19); g.fillStyle(0x1f7f78).fillRect(13, 5, 24, 14).fillStyle(TEAL).fillRect(15, 8, 12, 2).fillRect(15, 12, 18, 2).fillRect(15, 15, 8, 2);
+      g.fillStyle(0x59636f).fillRect(44, 16, 14, 6).fillRect(48, 12, 3, 4).fillStyle(TEAL).fillRect(52, 18, 4, 2);
     });
-    mk('e2', 22, 26, g => { g.fillStyle(0x2a1710).fillRect(1, 4, 20, 22).fillRect(4, 0, 4, 6).fillRect(14, 0, 4, 6).fillStyle(0xc9622c).fillRect(2, 5, 18, 19).fillStyle(ORG).fillRect(2, 5, 18, 3).fillStyle(0x1a0d08).fillRect(4, 10, 14, 7).fillStyle(0xffe9c0).fillRect(6, 12, 4, 3).fillRect(12, 12, 4, 3).fillStyle(0x1a0d08).fillRect(4, 22, 5, 4).fillRect(13, 22, 5, 4); });
-    mk('t2', 24, 20, g => { g.fillStyle(0x2a1710).fillRect(0, 8, 24, 12).fillStyle(0xc9622c).fillRect(2, 10, 20, 8).fillStyle(0x2a1710).fillRect(4, 0, 16, 11).fillStyle(0xc9622c).fillRect(6, 2, 12, 7).fillStyle(0xffe9c0).fillRect(9, 4, 6, 3).fillStyle(ORG).fillRect(10, 12, 4, 2); });
+    mk('cp', 30, 54, g => {
+      g.fillStyle(0x10161d).fillRect(4, 10, 22, 44).fillRect(13, 0, 4, 10).fillStyle(0x2c4151).fillRect(4, 10, 22, 2); g.fillStyle(0x0b0f14).fillRect(8, 16, 14, 16).lineStyle(1, TEAL).strokeRect(8.5, 16.5, 13, 15);
+      g.fillStyle(TEAL).fillRect(10, 19, 10, 2).fillRect(10, 23, 7, 2).fillRect(10, 27, 9, 2); g.fillStyle(0x3a4a58).fillRect(8, 38, 14, 3).fillRect(8, 44, 14, 3); g.fillStyle(ORG).fillRect(13, 0, 4, 3);
+    });
+    mk('door', 44, 76, g => { g.fillStyle(0x10161d).fillRect(0, 0, 44, 76).fillStyle(0x0b0f14).fillRect(5, 6, 34, 70).lineStyle(2, TEAL).strokeRect(5, 6, 34, 70).fillStyle(0x1f7f78).fillRect(9, 10, 26, 66).fillStyle(TEAL).fillRect(20, 10, 4, 66).fillStyle(0x0b0f14).fillRect(0, 0, 44, 5); });
+    mk('e2', 33, 39, g => { g.fillStyle(0x2a1710); R(g, 1, 4, 20, 22); R(g, 4, 0, 4, 6); R(g, 14, 0, 4, 6); g.fillStyle(0xc9622c); R(g, 2, 5, 18, 19); g.fillStyle(ORG); R(g, 2, 5, 18, 3); g.fillStyle(0x1a0d08); R(g, 4, 10, 14, 7); g.fillStyle(0xffe9c0); R(g, 6, 12, 4, 3); R(g, 12, 12, 4, 3); g.fillStyle(0x1a0d08); R(g, 4, 22, 5, 4); R(g, 13, 22, 5, 4); });
+    mk('g2', 33, 39, g => { g.fillStyle(0x161c24); R(g, 1, 4, 20, 22); R(g, 4, 0, 4, 6); R(g, 14, 0, 4, 6); g.fillStyle(0x5d6b7a); R(g, 2, 5, 18, 19); g.fillStyle(0x93a4b5); R(g, 2, 5, 18, 3); R(g, 2, 14, 18, 2); g.fillStyle(0x0b0f14); R(g, 4, 10, 14, 5); g.fillStyle(TEAL); R(g, 6, 11, 10, 2); g.fillStyle(0x161c24); R(g, 4, 22, 5, 4); R(g, 13, 22, 5, 4); });
+    mk('t2', 36, 30, g => { g.fillStyle(0x2a1710); R(g, 0, 8, 24, 12); g.fillStyle(0xc9622c); R(g, 2, 10, 20, 8); g.fillStyle(0x2a1710); R(g, 4, 0, 16, 11); g.fillStyle(0xc9622c); R(g, 6, 2, 12, 7); g.fillStyle(0xffe9c0); R(g, 9, 4, 6, 3); g.fillStyle(ORG); R(g, 10, 12, 4, 2); });
+  }
+
+  kernAnims() {
+    const A = (key, name, fps, rep = 0, frames) => {
+      if (this.anims.exists(key)) return;
+      const r = KERN.rows[name], list = frames || [...Array(KERN.n[name]).keys()];
+      this.anims.create({ key, frames: list.map(i => ({ key: 'kernsheet', frame: r * KERN.cols + i })), frameRate: fps, repeat: rep });
+    };
+    A('idle', 'idle', 5, -1); A('walk', 'walk', 10, -1); A('run', 'run', 14, -1); A('jump', 'jump', 16); A('fall', 'fall', 10, -1); A('land', 'land', 24);
+    A('bash', 'bash', 22); A('dbash', 'dbash', 18, 0, [0, 1]); A('rebound', 'dbash', 14, 0, [2, 3, 4]); A('parry', 'parry', 24); A('dmg', 'dmg', 14, 0, [0, 1, 2, 3]); A('ko', 'dmg', 1, 0, [4]);
   }
 
   level() {
     const add = this.add, txt = (x, y, s, c = '#4a7f86') => add.text(x, y, s, { fontFamily: 'monospace', fontSize: '12px', color: c }).setDepth(1);
-    for (let i = 0; i < 70; i++) add.text(Phaser.Math.Between(0, 1700), Phaser.Math.Between(0, 560), Phaser.Math.RND.pick(['0', '1', '01', '$', '//', '10']), { fontFamily: 'monospace', fontSize: '14px', color: '#12303a' }).setScrollFactor(0.35).setDepth(-5);
-    this.sky = add.tileSprite(0, 0, 960, 540, 'sky').setOrigin(0).setScrollFactor(0).setDepth(-10); this.solids = this.physics.add.staticGroup(); this.sr = []; this.spikes = []; this.enemies = this.physics.add.group(); this.fruits = [];
+    const glow = (x, y, sc, tint = TEAL, a = 0.25) => add.image(x, y, 'glow').setTint(tint).setScale(sc).setAlpha(a).setBlendMode(Phaser.BlendModes.ADD).setDepth(2);
+    this.sky = add.tileSprite(0, 0, 960, 540, 'sky').setOrigin(0).setScrollFactor(0).setDepth(-10);
+    for (let i = 0; i < 50; i++) add.text(Phaser.Math.Between(0, 2000), Phaser.Math.Between(0, 560), Phaser.Math.RND.pick(['0', '1', '01', '$', '//', '10']), { fontFamily: 'monospace', fontSize: '14px', color: '#12303a' }).setScrollFactor(0.35).setDepth(-5);
+    this.solids = this.physics.add.staticGroup(); this.sr = []; this.spikes = []; this.enemies = this.physics.add.group(); this.fruits = [];
     const plat = (x, y, w, h) => { this.solids.add(add.rectangle(x + w / 2, y + h / 2, w, h, MID).setVisible(false)); add.tileSprite(x + w / 2, y + h / 2, w, h, 'panel'); add.rectangle(x + w / 2, y + 1, w, 3, TEAL, 0.9); add.rectangle(x + w / 2, y + 7, w, 10, TEAL, 0.1).setBlendMode(Phaser.BlendModes.ADD); this.sr.push(new Rect(x, y, w, h)); };
     const spk = (x, y, w) => { add.tileSprite(x + w / 2, y + 6, w, 12, 'spike'); this.spikes.push(new Rect(x + 2, y + 3, w - 4, 9)); };
-    plat(0, 600, 760, 200); plat(900, 600, 500, 200); plat(1700, 600, 600, 200); plat(2400, 600, 400, 200); plat(1540, 250, 240, 16);
-    spk(760, 700, 140); spk(1400, 650, 300); spk(2300, 700, 100); spk(1840, 515, 40); spk(1800, 430, 40); spk(1800, 345, 40);
-    this.zone = [900, 2300]; [[900, 500], [1700, 600]].forEach(([x, w]) => add.rectangle(x + w / 2, 598, w, 3, TEAL, 0.35));
-    this.benchX = 300; add.rectangle(300, 589, 38, 22, 0x10161d).setStrokeStyle(2, TEAL);
-    txt(24, 540, 'SIDEQUEST: test lobby'); txt(250, 555, 'WORKBENCH', '#2fe0c8'); txt(920, 560, 'RUN ZONE: hold SHIFT >>>>>>>>', '#2fe0c8');
-    txt(1420, 560, 'bash DOWN on spikes = pogo'); txt(1860, 560, 'pogo nodes lead up to a secret');
-    [[560, 'FLUXELLE', 40, 0xff6fa8], [1250, 'FLUXXIE', 50, 0xffd84a], [2100, 'FLUXELLE', 40, 0xff6fa8], [2650, 'FLUXXIE', 50, 0xffd84a], [1650, 'FLUXEAR', 100, 0x7dff8a]]
-      .forEach(([x, n, bw, c]) => { const o = add.circle(x, x === 1650 ? 230 : 584, 7, c).setStrokeStyle(2, 0xffffff); o.n = n; o.bw = bw; this.tweens.add({ targets: o, y: o.y - 5, yoyo: true, repeat: -1, duration: 600 }); this.fruits.push(o); });
-    const en = (type, x, y, min, max) => {
-      const e = this.physics.add.sprite(x, y, type === 't' ? 't2' : 'e2'); e.type = type; e.hp = e.mhp = TUNE.enemyHp;
-      Object.assign(e, { st: 'patrol', dir: 1, min, max, until: 0, stun: 0, face: 1 }); this.enemies.add(e); if (type === 't') e.body.setImmovable(true); e.setDepth(3);
+    const hang = (x, y) => { add.rectangle(x + 20, y / 2, 3, y, 0x23343c); add.rectangle(x + 20, 4, 18, 8, 0x2c4151); spk(x, y, 40); };
+    // Dungeon: entrance -> room 1 -> run corridor (380px gap) -> guard room -> checkpoint -> climb -> exit
+    plat(0, GY, 520, 300); plat(520, 760, 140, 40); plat(660, GY, 640, 300); plat(1300, 740, 380, 60); plat(1680, GY, 700, 300);
+    plat(2440, 540, 130, 16); plat(2630, 440, 130, 16); plat(2810, 345, 130, 16); plat(2960, 250, 640, 700); plat(2120, 250, 200, 16);
+    spk(520, 748, 140); spk(1300, 728, 380); hang(2330, 540); hang(2370, 445); hang(2330, 350); add.rectangle(2350, 15, 340, 30, 0x10161d);
+    this.zone = [660, 2380]; [[660, 640], [1680, 700]].forEach(([x, w]) => add.rectangle(x + w / 2, GY - 2, w, 3, TEAL, 0.35));
+    this.benchX = 300; add.image(300, GY, 'bench').setOrigin(0.5, 1).setDepth(2); glow(300, GY - 26, 2.4, TEAL, 0.3);
+    add.image(70, GY, 'door').setOrigin(0.5, 1).setDepth(1); glow(70, GY - 40, 2.6, TEAL, 0.2);
+    this.cpx = 2280; add.image(this.cpx, GY, 'cp').setOrigin(0.5, 1).setDepth(2); this.cpGlow = glow(this.cpx, GY - 30, 2.2, this.cp ? TEAL : ORG, 0.35);
+    this.exit = new Rect(3470, 250 - 76, 44, 76); add.image(3492, 250, 'door').setOrigin(0.5, 1).setDepth(2); glow(3492, 215, 3.2, TEAL, 0.4);
+    txt(24, GY - 130, 'SIDEQUEST // ENTRANCE'); txt(250, GY - 70, 'WORKBENCH', '#2fe0c8'); txt(690, GY - 120, 'RUN ZONE: hold SHIFT >>>>>>', '#2fe0c8'); txt(1330, GY - 100, 'bash DOWN on spikes = pogo');
+    txt(1700, GY - 150, 'ARMORED GUARD: PARRY to stun it, then Bash'); txt(2200, GY - 110, 'CHECKPOINT', '#2fe0c8'); txt(2150, 215, 'secret'); txt(3380, 130, 'EXIT >', '#2fe0c8');
+    const fr = (id, x, y, n, bw, c) => {
+      if (this.picked.has(id)) return; const o = add.circle(x, y, 8, c).setStrokeStyle(2, 0xffffff).setDepth(3); Object.assign(o, { id, n, bw }); glow(x, y, 0.8, c, 0.35);
+      this.tweens.add({ targets: o, y: y - 5, yoyo: true, repeat: -1, duration: 600 }); this.fruits.push(o);
     };
-    en('l', 1050, 570, 960, 1280); en('l', 1900, 570, 1760, 2250); en('t', 2260, 585); en('l', 2580, 570, 2450, 2740);
+    fr('f0', 420, GY - 18, 'FLUXELLE', 40, 0xff6fa8); fr('f1', 900, GY - 18, 'FLUXXIE', 50, 0xffd84a); fr('f2', 1850, GY - 18, 'FLUXELLE', 40, 0xff6fa8); fr('f3', 2200, GY - 18, 'FLUXXIE', 50, 0xffd84a);
+    fr('f4', 2500, 515, 'FLUXELLE', 40, 0xff6fa8); fr('f5', 2220, 226, 'FLUXEAR', 100, 0x7dff8a); fr('f6', 3100, 226, 'FLUXXIE', 50, 0xffd84a);
+    const en = (id, type, x, y, min, max) => {
+      if (this.killed.has(id)) return; const e = this.physics.add.sprite(x, y, type === 't' ? 't2' : type === 'g' ? 'g2' : 'e2');
+      Object.assign(e, { id, type, hp: type === 'g' ? 4 : TUNE.enemyHp, st: 'patrol', dir: 1, min, max, until: 0, stun: 0, face: 1 }); e.mhp = e.hp; this.enemies.add(e); if (type === 't') e.body.setImmovable(true); e.setDepth(3);
+    };
+    en('l1', 'l', 1000, GY - 30, 720, 1240); en('l2', 'l', 1190, GY - 30, 720, 1240); en('g1', 'g', 2000, GY - 30, 1780, 2200); en('t1', 't', 2350, GY - 24);
+    en('t2', 't', 2700, 440 - 24); en('l3', 'l', 3250, 250 - 30, 3040, 3450);
   }
 
   spawn() {
-    const P = this.P = this.physics.add.sprite(120, 560, 'k_i0').setDepth(4);
-    P.body.setSize(14, 30).setOffset(2, 2).setMaxVelocity(TUNE.maxVel, 900); P.setCollideWorldBounds(true); P.setVisible(false);
-    this.vis = this.add.sprite(P.x, P.y + 16, 'kernsheet', 0).setOrigin(0.5, KERN.ay / KERN.fh).setDepth(4).play('idle');
-    this.head = this.add.text(0, 0, '$', { fontFamily: 'monospace', fontSize: '11px', fontStyle: 'bold', color: '#2fe0c8' }).setOrigin(0.5).setDepth(5);
-    this.gunS = this.add.sprite(0, 0, 'lw_' + this.cfgKey).setDepth(5);
+    const snap = this.registry.get('snap'), P = this.P = this.physics.add.sprite(snap ? snap.x : 120, snap ? snap.y : GY - 26, 'dot').setVisible(false);
+    P.body.setSize(BODY.w, BODY.h).setMaxVelocity(TUNE.maxVel, 900); P.setCollideWorldBounds(true);
+    this.vis = this.add.sprite(P.x, P.y + BODY.h / 2, 'kernsheet', 0).setOrigin(0.5, KERN.ay / KERN.fh).setDepth(4).play('idle');
+    this.arm = this.add.graphics().setDepth(4.5); this.glove = this.add.graphics().setDepth(5.5); this.gunS = this.add.sprite(0, 0, 'lw_' + this.cfgKey).setDepth(5).setVisible(false);
+    this.pl = this.add.image(P.x, P.y, 'glow').setTint(TEAL).setScale(5).setAlpha(0.1).setBlendMode(Phaser.BlendModes.ADD).setDepth(3);
     this.fx = this.add.graphics().setDepth(6); this.eg = this.add.graphics().setDepth(7);
     this.bullets = this.physics.add.group({ allowGravity: false }); this.bolts = this.physics.add.group({ allowGravity: false });
     const ph = this.physics.add;
@@ -136,101 +170,107 @@ class Main extends Phaser.Scene {
   makeHud() {
     const T = (x, y, s, c = '#9fe8dc', sz = '12px') => this.add.text(x, y, s, { fontFamily: 'monospace', fontSize: sz, color: c }).setScrollFactor(0).setDepth(100);
     const R = (x, y, w, h, c, a = 1) => this.add.rectangle(x, y, w, h, c, a).setOrigin(0).setScrollFactor(0).setDepth(100);
-    T(20, 12, 'BANDWIDTH'); R(20, 28, 164, 14, 0x000000, 0.7); this.bar = R(22, 30, 160, 10, TEAL);
-    this.hpT = T(20, 48, ''); this.cfgT = T(20, 66, '');
-    T(14, 516, 'A/D move  SPACE jump  SHIFT run (RUN ZONE)  MOUSE aim  LMB shoot  RMB/K bash  S+bash in air = pogo  L parry  E bench  R reset', '#5f8f94', '11px');
+    T(20, 12, 'BANDWIDTH'); R(20, 28, 164, 14, 0x000000, 0.7); this.bar = R(22, 30, 160, 10, TEAL); this.hpT = T(20, 48, ''); this.cfgT = T(20, 66, '');
+    this.objT = T(480, 12, '', '#ffd84a', '13px').setOrigin(0.5, 0);
+    const kn = n => KEYS[n][0];
+    T(14, 516, `${kn('left')}/${kn('right')} move  ${kn('jump')} jump  ${kn('run')} run (RUN ZONE)  MOUSE aim, LMB shoot  RMB/${kn('bash')} bash  ${kn('down')}+bash in air = pogo  ${kn('parry')} parry  ${kn('interact')} bench  ${kn('restart')} reset`, '#5f8f94', '11px');
     this.prompt = T(480, 470, '', '#ffffff').setOrigin(0.5);
     this.menuT = T(150, 110, '', '#ffffff', '14px').setBackgroundColor('rgba(5,10,14,0.92)').setPadding(18).setDepth(101).setVisible(false);
   }
 
   hud(t) {
-    const c = this.cfg;
-    this.bar.width = 160 * Math.max(0, this.bw) / 100; this.bar.setFillStyle(t < this.noBw ? 0xff4444 : TEAL);
-    this.hpT.setText('HP ' + '\u25A0'.repeat(Math.max(0, this.hp)));
-    this.cfgT.setText('LAST WORDS: ' + c.name + '   parry: ' + (t < this.parryCd ? 'recovering' : 'ready'));
+    const c = this.cfg; this.bar.width = 160 * Math.max(0, this.bw) / 100; this.bar.setFillStyle(t < this.noBw ? 0xff4444 : TEAL);
+    this.hpT.setText('HP ' + '\u25A0'.repeat(Math.max(0, this.hp))); this.cfgT.setText('LAST WORDS: ' + c.name + '   parry: ' + (t < this.parryCd ? 'recovering' : 'ready'));
+    this.objT.setText(this.won ? 'EXPEDITION COMPLETE' : this.cp ? 'OBJECTIVE: climb to the EXIT (top right)' : 'OBJECTIVE: reach the CHECKPOINT, then the EXIT');
+  }
+
+  gunGeom(ang) {
+    const V = this.vis, k = KERN.k, fl = this.faceLeft ? -1 : 1, wp = WEAPONS[this.cfgKey], left = Math.abs(ang) > Math.PI / 2;
+    const sx = V.x + SHO[0] * k * fl, sy = V.y + SHO[1] * k, reach = (ARM - this.kick) * k, hx = sx + Math.cos(ang) * reach, hy = sy + Math.sin(ang) * reach;
+    const tv = new Phaser.Math.Vector2((wp.tx - wp.px) * GUN_S, (wp.ty - wp.py) * GUN_S * (left ? -1 : 1)).rotate(ang);
+    return { sx, sy, hx, hy, mx: hx + tv.x, my: hy + tv.y, left, wp };
   }
 
   update(time, delta) {
-    const t = this.now = time, dt = delta / 1000, P = this.P, b = P.body, cam = this.cameras.main, K = this.k;
-    const dn = n => K[n].some(k => k.isDown), JD = Phaser.Input.Keyboard.JustDown;
-    const J = {}; for (const n of ['jump', 'bash', 'parry', 'interact', 'restart']) J[n] = K[n].map(k => JD(k)).some(v => v);
-    const esc = JD(this.escK), nums = this.numK.map(k => JD(k));
+    const t = this.now = time, dt = delta / 1000, P = this.P, b = P.body, cam = this.cameras.main, K = this.k, T = this.touch, V = this.vis, JD = Phaser.Input.Keyboard.JustDown;
+    T.update();
+    const J = {}; for (const n of ['jump', 'bash', 'parry', 'interact', 'restart']) J[n] = K[n].map(k => JD(k)).some(v => v) || T.pressed(n);
+    const esc = JD(this.escK), nums = this.numK.map(k => JD(k)), dn = n => K[n].some(k => k.isDown) || T.down(n);
     this.hud(t); this.sky.tilePositionX = cam.scrollX * 0.2; this.sky.tilePositionY = cam.scrollY * 0.1;
-    if (J.restart) return this.scene.restart();
+    if (J.restart) { this.registry.set('snap', null); return this.scene.restart(); }
     if (this.menu) { this.menuInput(J.interact || esc, nums); return; }
-    if (this.dead) return;
+    if (this.dead || this.won) return;
 
-    const grounded = b.blocked.down, ptr = this.input.activePointer; ptr.updateWorldPoint(cam);
-    if (grounded && !this.wasG && this.lastVy > 260) this.dust(P.x, P.y + 15, 7), this.playAct('land', 130, true); this.wasG = grounded; this.lastVy = b.velocity.y;
-    const ay = P.y + 4, ang = Math.atan2(ptr.worldY - ay, ptr.worldX - P.x), left = Math.abs(ang) > Math.PI / 2;
+    const grounded = b.blocked.down, ptr = this.input.activePointer, k = KERN.k, feet = P.y + BODY.h / 2;
+    const ax = (dn('right') ? 1 : 0) - (dn('left') ? 1 : 0);
+    const sx = V.x + SHO[0] * k * (this.faceLeft ? -1 : 1), sy = V.y + SHO[1] * k; let ang;
+    if (T.on) ang = T.aim.on ? Math.atan2(T.aim.y, T.aim.x) : (this.faceLeft ? Math.PI : 0); else { ptr.updateWorldPoint(cam); ang = Math.atan2(ptr.worldY - sy, ptr.worldX - sx); }
+    this.faceLeft = T.on ? (T.aim.on ? Math.abs(ang) > Math.PI / 2 : (ax ? ax < 0 : this.faceLeft)) : Math.abs(ang) > Math.PI / 2;
+    if (grounded && !this.wasG && this.lastVy > 260) { this.dust(P.x, feet, 7); this.playAct('land', 130, true); } this.wasG = grounded; this.lastVy = b.velocity.y;
     this.gT = grounded ? this.gT + delta : 0; if (this.gT > 350) this.safe = { x: P.x, y: P.y };
     if (grounded) { this.coyote = t + TUNE.coyoteMs; if (b.velocity.y >= 0) this.jumping = false; this.bw = Math.min(this.cfg.maxBW, this.bw + TUNE.bwRegenGrounded * dt); }
 
-    // movement
     const inZone = P.x > this.zone[0] && P.x < this.zone[1];
     if (grounded) this.curMax = (inZone && dn('run')) ? TUNE.run : TUNE.walk;
-    const ax = (dn('right') ? 1 : 0) - (dn('left') ? 1 : 0);
     if (t > this.recoilUntil && t > this.hurtUntil) {
-      const tg = ax * this.curMax, v = b.velocity.x;
-      const a = (grounded ? TUNE.accelGround : (Math.abs(v) > this.curMax && Math.sign(v) === ax ? 450 : TUNE.accelAir)) * dt;
+      const tg = ax * this.curMax, v = b.velocity.x, a = (grounded ? TUNE.accelGround : (Math.abs(v) > this.curMax && Math.sign(v) === ax ? 450 : TUNE.accelAir)) * dt;
       b.setVelocityX(v < tg ? Math.min(v + a, tg) : Math.max(v - a, tg));
     }
     if (J.jump) this.jbuf = t + TUNE.bufferMs;
-    if (t < this.jbuf && t < this.coyote && t > this.hurtUntil) { b.setVelocityY(-TUNE.jump); this.jbuf = this.coyote = 0; this.jumping = true; if (grounded) this.dust(P.x, P.y + 15, 4); }
+    if (t < this.jbuf && t < this.coyote && t > this.hurtUntil) { b.setVelocityY(-TUNE.jump); this.jbuf = this.coyote = 0; this.jumping = true; if (grounded) this.dust(P.x, feet, 4); }
     if (this.jumping && !dn('jump') && b.velocity.y < 0) { b.setVelocityY(b.velocity.y * TUNE.jumpCut); this.jumping = false; }
 
-    // actions
-    const face = ax || (left ? -1 : 1);
-    if (ptr.leftButtonDown()) this.shoot(t, P.x, ay, ang);
-    if (J.bash || this.wantBash) { this.wantBash = false; this.startBash(t, dn('down') && !grounded, face); }
+    if (T.on ? T.aim.on : ptr.leftButtonDown()) this.shoot(t, ang);
+    const downIn = dn('down') || (T.on && T.aim.on && T.aim.y > 0.6);
+    if (J.bash || this.wantBash) { this.wantBash = false; this.startBash(t, downIn && !grounded, ax || (this.faceLeft ? -1 : 1)); }
     if (J.parry) this.tryParry(t);
-    const near = Math.abs(P.x - this.benchX) < 45 && grounded;
-    this.prompt.setText(near ? '[E] LAST WORDS workbench' : '');
-    if (near && J.interact) { this.menu = true; this.physics.pause(); this.showMenu(); }
+    const nearB = Math.abs(P.x - this.benchX) < 55 && grounded;
+    this.prompt.setText(nearB ? '[' + KEYS.interact[0] + '] LAST WORDS workbench' : '');
+    if (nearB && J.interact) { this.menu = true; this.physics.pause(); this.showMenu(); }
+    if (!this.cp && Math.abs(P.x - this.cpx) < 50 && P.y > GY - 140 && P.y < GY) this.saveCheckpoint();
 
-    // bash hitbox, visuals
     const f = this.fx.clear(), B = this.bashS;
     if (B && t < B.until) {
-      const dd = B.dir === 'd', r = dd ? new Rect(P.x - 17, P.y + 8, 34, 44) : new Rect(P.x + (B.face > 0 ? 4 : -48), P.y - 14, 44, 30), c = this.cfg;
+      const dd = B.dir === 'd', r = dd ? new Rect(P.x - 24, P.y + 14, 48, 62) : new Rect(P.x + (B.face > 0 ? 6 : -72), P.y - 22, 66, 46), c = this.cfg;
       for (const e of this.enemies.getChildren().slice()) {
         if (!B.hit.has(e) && hit(r, e.getBounds())) { B.hit.add(e); this.dmg(e, c.bashDmg, B.face, c.stagger); if (dd && !B.pogo) this.pogo(B); }
       }
       if (dd && !B.pogo) for (const s of this.sr.concat(this.spikes)) if (hit(r, s)) { this.pogo(B); break; }
     }
-    if (t < this.parryUntil) f.lineStyle(3, TEAL, 0.9).strokeCircle(P.x, P.y, 26);
-    if (t < this.recoilUntil) { const g = this.add.image(this.vis.x, this.vis.y, 'kernsheet', this.vis.frame.name).setOrigin(this.vis.originX, this.vis.originY).setFlipX(this.vis.flipX).setAngle(this.vis.angle).setTintFill(TEAL).setAlpha(0.4).setBlendMode(Phaser.BlendModes.ADD).setDepth(3); this.tweens.add({ targets: g, alpha: 0, duration: 200, onComplete: () => g.destroy() }); }
+    if (t < this.parryUntil) f.lineStyle(3, TEAL, 0.9).strokeCircle(P.x, P.y, 34);
+    if (t < this.recoilUntil) { const g = this.add.image(V.x, V.y, 'kernsheet', V.frame.name).setOrigin(V.originX, V.originY).setFlipX(V.flipX).setAngle(V.angle).setTintFill(TEAL).setAlpha(0.4).setBlendMode(Phaser.BlendModes.ADD).setDepth(3); this.tweens.add({ targets: g, alpha: 0, duration: 200, onComplete: () => g.destroy() }); }
 
-    const bsw = B && t < B.until, wl = bsw && B.dir === 'h' ? B.face < 0 : left;
-    const spd = Math.abs(b.velocity.x);
+    // body animation (feet-anchored art on the hidden physics body; animation never touches collision)
+    const bsw = B && t < B.until, wl = bsw && B.dir === 'h' ? B.face < 0 : this.faceLeft, spd = Math.abs(b.velocity.x);
     const an = grounded ? (spd > 30 && ax ? (spd > TUNE.walk + 30 ? 'run' : 'walk') : 'idle') : (b.velocity.y < 0 ? 'jump' : 'fall');
-    const V = this.vis, acting = this.act && t < this.act.until;
-    if (!acting) V.anims.play(an, true);
+    const acting = this.act && t < this.act.until; if (!acting) V.anims.play(an, true);
     V.anims.timeScale = !acting && (an === 'run' || an === 'walk') ? Phaser.Math.Clamp(spd / (an === 'run' ? TUNE.run : TUNE.walk), 0.6, 1.4) : 1;
     this.lean -= this.lean * Math.min(1, 10 * dt);
-    V.setPosition(P.x, P.y + 16).setFlipX(wl).setAngle(this.lean).setAlpha(t < this.inv && Math.floor(t / 80) % 2 ? 0.4 : 1);
-    this.head.setVisible(false);
-    const hh = HAND[V.frame.name] || HAND.carry, fl = V.flipX ? -1 : 1, WP = WEAPONS[this.cfgKey];
-    const hx = V.x + (hh[0] - KERN.fw / 2) * fl, hy = V.y + hh[1] - KERN.ay;
-    const gA = Math.atan2(ptr.worldY - hy, ptr.worldX - hx), gL = Math.abs(gA) > Math.PI / 2, kk = this.kick;
-    this.kick = Math.max(0, this.kick - 50 * dt);
-    const showGun = !(acting && ['bash', 'dbash', 'rebound', 'parry', 'dmg', 'ko'].includes(this.act.k));
-    this.gunS.setVisible(showGun).setScale(GUN_S).setOrigin(WP.px / 48, WP.py / 48).setPosition(hx - Math.cos(gA) * kk, hy - Math.sin(gA) * kk).setRotation(gA).setFlipY(gL);
-    const tv = new Phaser.Math.Vector2((WP.tx - WP.px) * GUN_S, (WP.ty - WP.py) * GUN_S * (gL ? -1 : 1)).rotate(gA);
-    this.muzzle = { x: hx + tv.x, y: hy + tv.y, a: gA };
-    if (this.cfgKey === 'pre' && showGun) f.lineStyle(1, TEAL, 0.3).lineBetween(this.muzzle.x, this.muzzle.y, this.muzzle.x + Math.cos(gA) * 220, this.muzzle.y + Math.sin(gA) * 220);
+    V.setPosition(P.x, feet).setFlipX(wl).setAngle(this.lean).setAlpha(t < this.inv && Math.floor(t / 80) % 2 ? 0.4 : 1);
+    this.pl.setPosition(P.x, P.y);
 
-    // world interactions
+    // revolver: visible only while firing, hand-anchored (see GUN constants)
+    const g = this.gunGeom(ang), show = t < this.gunUntil && !(acting && BLOCK.includes(this.act.k));
+    this.kick = Math.max(0, this.kick - 40 * dt); this.arm.clear(); this.glove.clear(); this.gunS.setVisible(show);
+    if (show) {
+      this.arm.lineStyle(7, 0x0b0b10).lineBetween(g.sx, g.sy, g.hx, g.hy);
+      this.gunS.setScale(GUN_S).setOrigin(g.wp.px / 48, g.wp.py / 48).setPosition(g.hx, g.hy).setRotation(ang).setFlipY(g.left).setAlpha(Math.min(1, (this.gunUntil - t) / 90));
+      this.glove.fillStyle(0xf2f2ee).fillCircle(g.hx, g.hy, 4.5).lineStyle(1, 0x0b0b10).strokeCircle(g.hx, g.hy, 4.5);
+      if (this.cfgKey === 'pre') f.lineStyle(1, TEAL, 0.3).lineBetween(g.mx, g.my, g.mx + Math.cos(ang) * 240, g.my + Math.sin(ang) * 240);
+    }
+
     const pb = this.pb();
-    if (P.y > 800 || this.spikes.some(s => hit(s, pb))) this.hazard(t);
+    if (P.y > 940 || this.spikes.some(s => hit(s, pb))) this.hazard(t);
+    if (hit(this.exit, pb)) this.win();
     this.fruits = this.fruits.filter(o => {
-      if (Math.hypot(o.x - P.x, o.y - P.y) > 22) return true;
-      this.bw = Math.min(this.cfg.maxBW, this.bw + o.bw); this.pop(o.x, o.y - 10, o.n + ' +' + o.bw + ' BW', '#7dffd8'); o.destroy(); return false;
+      if (Math.hypot(o.x - P.x, o.y - P.y) > 30) return true;
+      this.bw = Math.min(this.cfg.maxBW, this.bw + o.bw); this.picked.add(o.id); this.pop(o.x, o.y - 10, o.n + ' +' + o.bw + ' BW', '#7dffd8'); beep(this, 600, 1200, 0.1, 'triangle'); o.destroy(); return false;
     });
     this.eg.clear();
     for (const e of this.enemies.getChildren().slice()) {
       this.ai(e, t);
-      if (e.hp < e.mhp) this.eg.fillStyle(0x000000).fillRect(e.x - 12, e.y - 22, 24, 4).fillStyle(ORG).fillRect(e.x - 11, e.y - 21, 22 * e.hp / e.mhp, 2);
-      if (e.st === 'wind') this.eg.fillStyle(0xff4444).fillRect(e.x - 1, e.y - 38, 3, 9).fillRect(e.x - 1, e.y - 26, 3, 3);
+      if (e.hp < e.mhp) this.eg.fillStyle(0x000000).fillRect(e.x - 14, e.y - 28, 28, 4).fillStyle(ORG).fillRect(e.x - 13, e.y - 27, 26 * e.hp / e.mhp, 2);
+      if (e.st === 'wind') this.eg.fillStyle(0xff4444).fillRect(e.x - 1, e.y - 46, 3, 9).fillRect(e.x - 1, e.y - 34, 3, 3);
     }
     for (const c of this.bolts.getChildren().slice()) {
       this.dot(c.x, c.y, ORG, 1.4); c.rotation += 0.3;
@@ -241,124 +281,118 @@ class Main extends Phaser.Scene {
 
   pb() { const b = this.P.body; return new Rect(b.x, b.y, b.width, b.height); }
 
-  shoot(t, x, y, ang) {
+  shoot(t, ang) {
     const c = this.cfg, b = this.P.body;
     if (t < this.shotCd || t < this.hurtUntil) return;
     this.shotCd = t + c.cd;
-    if (this.bw < c.cost) { this.noBw = t + 300; this.shotCd = t + 200; return; }
-    this.bw -= c.cost;
-    const m0 = this.muzzle || { x: x + Math.cos(ang) * 34, y: y + Math.sin(ang) * 34, a: ang };
-    const a = m0.a + Phaser.Math.FloatBetween(-c.spread, c.spread), dx = Math.cos(a), dy = Math.sin(a), mx = m0.x, my = m0.y;
-    const bl = this.physics.add.sprite(mx - dx * 6, my - dy * 6, 'bullet').setRotation(a).setDepth(5).setBlendMode(Phaser.BlendModes.ADD); this.bullets.add(bl);
-    bl.body.setSize(8, 8).setAllowGravity(false).setVelocity(dx * 950, dy * 950);
-    this.time.delayedCall(c.life, () => bl.active && bl.destroy());
-    if (Math.abs(dx) > 0.25) b.velocity.x = -dx * c.recoil;
-    if (Math.abs(dy) > 0.25) b.velocity.y = -dy * c.recoil;
-    this.recoilUntil = t + 170; this.jumping = false; this.kick = 7;
-    const el = Math.atan2(dy, Math.abs(dx)); this.playAct(el < -0.55 ? 'up' : el > 0.55 ? 'down' : 'side', 190); this.lean = Math.abs(dy) < 0.8 ? -dx * 14 : 0;
-    const m = this.add.image(mx, my, 'flash').setTint({ std: 0xffffff, bay: 0xffb070, pre: 0x7ff0ff }[this.cfgKey]).setOrigin(0, 0.5).setRotation(a).setDepth(6).setBlendMode(Phaser.BlendModes.ADD); this.tweens.add({ targets: m, scaleX: 1.6, scaleY: 0.4, alpha: 0, duration: 110, onComplete: () => m.destroy() }); this.burst(mx, my, 0xfff0b0, 4);
-    this.cameras.main.shake(60, 0.003);
+    if (this.bw < c.cost) { this.noBw = t + 300; this.shotCd = t + 200; beep(this, 140, 100, 0.05, 'square', 0.04); return; }
+    this.bw -= c.cost; this.gunUntil = t + 300;
+    const g = this.gunGeom(ang), a = ang + Phaser.Math.FloatBetween(-c.spread, c.spread), dx = Math.cos(a), dy = Math.sin(a);
+    const bl = this.physics.add.sprite(g.mx - dx * 8, g.my - dy * 8, 'bullet').setRotation(a).setDepth(5).setBlendMode(Phaser.BlendModes.ADD); this.bullets.add(bl);
+    bl.body.setSize(8, 8).setAllowGravity(false).setVelocity(dx * 950, dy * 950); this.time.delayedCall(c.life, () => bl.active && bl.destroy());
+    if (Math.abs(dx) > 0.25) b.velocity.x = -dx * c.recoil; if (Math.abs(dy) > 0.25) b.velocity.y = -dy * c.recoil;
+    this.recoilUntil = t + 170; this.jumping = false; this.kick = 4; this.lean = Math.abs(dy) < 0.8 ? -dx * 14 : 0;
+    const m = this.add.image(g.mx, g.my, 'flash').setTint({ std: 0xffffff, bay: 0xffb070, pre: 0x7ff0ff }[this.cfgKey]).setOrigin(0, 0.5).setRotation(a).setScale(1.3).setDepth(6).setBlendMode(Phaser.BlendModes.ADD);
+    this.tweens.add({ targets: m, scaleX: 2, scaleY: 0.5, alpha: 0, duration: 110, onComplete: () => m.destroy() }); this.burst(g.mx, g.my, 0xfff0b0, 4);
+    this.cameras.main.shake(60, 0.003); beep(this, 320, 90, 0.08, 'square', 0.06);
   }
 
   startBash(t, down, face) {
     if (t < this.bashCd || t < this.hurtUntil) return;
     this.bashCd = t + TUNE.bashCdMs; this.bashS = { until: t + TUNE.bashMs, dir: down ? 'd' : 'h', face, hit: new Set(), pogo: false }; this.playAct(down ? 'dbash' : 'bash', 230);
-    const pos = () => down ? [this.P.x, this.P.y + 20] : [this.P.x + face * 20, this.P.y];
-    const s = this.add.image(...pos(), 'slash').setRotation(down ? Math.PI / 2 : (face > 0 ? 0 : Math.PI)).setScale(0.6, 0.9).setDepth(6).setBlendMode(Phaser.BlendModes.ADD);
-    this.tweens.add({ targets: s, scaleX: 1.15, scaleY: 1.05, alpha: 0, duration: TUNE.bashMs + 90, ease: 'Cubic.easeOut', onUpdate: () => s.setPosition(...pos()), onComplete: () => s.destroy() });
+    const sc = KERN.k, pos = () => down ? [this.P.x, this.P.y + 30] : [this.P.x + face * 30, this.P.y - 2];
+    const s = this.add.image(...pos(), 'slash').setRotation(down ? Math.PI / 2 : (face > 0 ? 0 : Math.PI)).setScale(0.6 * sc, 0.9 * sc).setDepth(6).setBlendMode(Phaser.BlendModes.ADD);
+    this.tweens.add({ targets: s, scaleX: 1.15 * sc, scaleY: 1.05 * sc, alpha: 0, duration: TUNE.bashMs + 90, ease: 'Cubic.easeOut', onUpdate: () => s.setPosition(...pos()), onComplete: () => s.destroy() });
+    beep(this, 200, 70, 0.1, 'sawtooth', 0.06);
   }
 
   pogo(B) {
     B.pogo = true; this.playAct('rebound', 420); this.P.body.velocity.y = -this.cfg.pogo; this.jumping = false; this.recoilUntil = 0; this.bashCd = Math.min(this.bashCd, this.now + 120);
-    this.ring(this.P.x, this.P.y + 16, TEAL, 6, 26, 170); this.burst(this.P.x, this.P.y + 18, TEAL, 8); this.cameras.main.shake(50, 0.003);
+    this.ring(this.P.x, this.P.y + 24, TEAL, 6, 30, 170); this.burst(this.P.x, this.P.y + 26, TEAL, 8); this.cameras.main.shake(50, 0.003); beep(this, 400, 800, 0.08, 'triangle', 0.06);
   }
 
   tryParry(t) {
     if (t < this.parryCd || this.bw < TUNE.parryCost) return;
-    this.bw -= TUNE.parryCost; this.parryUntil = t + TUNE.parryWindowMs; this.parryCd = t + TUNE.parryCdMs; this.playAct('parry', 280);
+    this.bw -= TUNE.parryCost; this.parryUntil = t + TUNE.parryWindowMs; this.parryCd = t + TUNE.parryCdMs; this.playAct('parry', 280); beep(this, 500, 650, 0.05, 'triangle', 0.04);
   }
 
   parryOK(t) {
     this.parryCd = 0; this.inv = t + 300; const P = this.P;
-    this.ring(P.x, P.y, TEAL, 10, 64, 260); this.ring(P.x, P.y, 0xffffff, 6, 40, 200); this.burst(P.x, P.y, TEAL, 14); this.pop(P.x, P.y - 30, 'PARRY', '#2fe0c8'); this.cameras.main.flash(90, 47, 224, 200);
+    this.ring(P.x, P.y, TEAL, 10, 70, 260); this.ring(P.x, P.y, 0xffffff, 6, 44, 200); this.burst(P.x, P.y, TEAL, 14); this.pop(P.x, P.y - 44, 'PARRY', '#2fe0c8'); this.cameras.main.flash(90, 47, 224, 200);
+    beep(this, 880, 1760, 0.12, 'triangle', 0.12); this.time.delayedCall(70, () => beep(this, 1320, 2640, 0.14, 'triangle', 0.1)); this.hitstop(70);
   }
 
   hurt(t, x) {
     if (t < this.inv) return 'inv';
     if (t < this.parryUntil) { this.parryOK(t); return 'parry'; }
-    this.hp--; this.inv = t + TUNE.invMs; this.hurtUntil = t + 220; this.playAct('dmg', 350);
-    this.P.body.setVelocity((Math.sign(this.P.x - x) || 1) * 260, -260); this.cameras.main.shake(140, 0.007);
+    this.hp--; this.inv = t + TUNE.invMs; this.hurtUntil = t + 220; this.playAct('dmg', 350); beep(this, 140, 50, 0.15, 'sawtooth', 0.09);
+    this.P.body.setVelocity((Math.sign(this.P.x - x) || 1) * 280, -300); this.cameras.main.shake(140, 0.007);
     if (this.hp <= 0) this.die();
     return 'hit';
   }
 
   hazard(t) {
-    if (t >= this.inv) { this.hp--; this.cameras.main.shake(140, 0.007); }
-    this.inv = t + TUNE.invMs; this.P.setPosition(this.safe.x, this.safe.y).body.setVelocity(0, 0);
-    if (this.hp <= 0) this.die();
+    if (t >= this.inv) { this.hp--; this.cameras.main.shake(140, 0.007); beep(this, 140, 50, 0.15, 'sawtooth', 0.09); }
+    this.inv = t + TUNE.invMs; this.P.setPosition(this.safe.x, this.safe.y).body.setVelocity(0, 0); if (this.hp <= 0) this.die();
+  }
+
+  saveCheckpoint() {
+    this.cp = true; this.registry.set('snap', { bw: this.bw, hp: this.hp, x: this.cpx, y: GY - 26, picked: [...this.picked], killed: [...this.killed] }); // exact state at activation; permanent loadout lives in registry 'cfg'
+    this.cpGlow.setTint(TEAL); this.ring(this.cpx, GY - 30, TEAL, 8, 70, 400); this.pop(this.cpx, GY - 90, 'CHECKPOINT: STATE SAVED', '#2fe0c8'); beep(this, 500, 1500, 0.25, 'triangle', 0.1);
   }
 
   die() {
-    this.dead = true; this.playAct('ko', 99999); this.P.body.setVelocity(0, 0); this.pop(this.P.x, this.P.y - 30, 'DOWN - respawning', '#ff8a3d');
-    this.cameras.main.fade(500, 0, 0, 0); this.time.delayedCall(550, () => this.scene.restart());
+    this.dead = true; this.playAct('ko', 99999); this.P.body.setVelocity(0, 0); this.pop(this.P.x, this.P.y - 40, this.cp ? 'REWINDING TO CHECKPOINT' : 'REWINDING', '#ff8a3d');
+    this.cameras.main.fade(600, 0, 0, 0); this.time.delayedCall(650, () => this.scene.restart());
+  }
+
+  win() {
+    if (this.won) return; this.won = true; this.P.body.setVelocity(0, 0); beep(this, 500, 1500, 0.4, 'triangle', 0.1);
+    const s = { fontFamily: 'monospace', color: '#2fe0c8' }; this.add.text(480, 190, 'EXPEDITION COMPLETE', { ...s, fontSize: '34px', fontStyle: 'bold' }).setOrigin(0.5).setScrollFactor(0).setDepth(300);
+    this.add.text(480, 240, 'press any key or tap to return to the board', { ...s, fontSize: '14px' }).setOrigin(0.5).setScrollFactor(0).setDepth(300);
+    this.time.delayedCall(1200, () => { const go = () => { this.registry.set('snap', null); this.cameras.main.fadeOut(400); this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('Title')); }; this.input.keyboard.once('keydown', go); this.input.once('pointerdown', go); });
   }
 
   dmg(e, n, dir, stun) {
-    if (!e.active) return;
-    const t = this.now; e.hp -= n; if (e.type === 'l') e.body.setVelocityX(dir * 180); this.ring(e.x, e.y, 0xffffff, 6, 24, 140); this.impact(e.x, e.y, 0xffffff); if (stun > 0) this.hitstop(55);
+    if (!e.active) return; const t = this.now;
+    if (e.type === 'g' && t >= e.stun) { this.ring(e.x, e.y, 0x9fb4c8, 6, 28, 140); beep(this, 900, 700, 0.05, 'square', 0.05); if (t > (e.popT || 0)) { e.popT = t + 800; this.pop(e.x, e.y - 40, 'ARMORED: parry it!', '#9fb4c8'); } return; }
+    e.hp -= n; if (e.type !== 't') e.body.setVelocityX(dir * 180); this.ring(e.x, e.y, 0xffffff, 6, 26, 140); this.impact(e.x, e.y, 0xffffff); if (stun > 0) this.hitstop(55); beep(this, 220, 90, 0.07, 'sawtooth', 0.06);
     if (stun >= 600 && e.st === 'wind') { e.st = 'rec'; e.until = t + stun; }
     e.stun = Math.max(e.stun, t + stun);
-    if (e.hp <= 0) { this.ring(e.x, e.y, ORG, 8, 50, 300); this.burst(e.x, e.y, ORG, 14); this.hitstop(90); e.destroy(); }
+    if (e.hp <= 0) { this.killed.add(e.id); this.ring(e.x, e.y, ORG, 8, 54, 300); this.burst(e.x, e.y, ORG, 14); this.hitstop(90); e.destroy(); }
   }
 
   bolt(e) {
-    const a = Math.atan2(this.P.y - e.y, this.P.x - e.x), c = this.add.circle(e.x, e.y - 4, 6, ORG).setDepth(5);
-    this.bolts.add(c); c.body.setAllowGravity(false).setVelocity(Math.cos(a) * TUNE.boltSpeed, Math.sin(a) * TUNE.boltSpeed);
-    this.time.delayedCall(4000, () => c.active && c.destroy());
+    const a = Math.atan2(this.P.y - e.y, this.P.x - e.x), c = this.physics.add.sprite(e.x, e.y - 4, 'bolt').setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
+    this.bolts.add(c); c.body.setSize(12, 12).setAllowGravity(false).setVelocity(Math.cos(a) * TUNE.boltSpeed, Math.sin(a) * TUNE.boltSpeed); this.time.delayedCall(4000, () => c.active && c.destroy());
   }
 
   ai(e, t) {
-    const P = this.P, dx = P.x - e.x, ad = Math.abs(dx), s = Math.sign(dx) || 1, b = e.body, near = Math.abs(P.y - e.y) < 90;
-    if (t < e.stun) { e.setTint(0x8aa0ff); if (e.type === 'l') b.velocity.x *= 0.9; return; }
+    const P = this.P, dx = P.x - e.x, ad = Math.abs(dx), s = Math.sign(dx) || 1, b = e.body, near = Math.abs(P.y - e.y) < 110, g = e.type === 'g';
+    if (t < e.stun) { e.setTint(0x8aa0ff); if (e.type !== 't') b.velocity.x *= 0.9; return; }
     e.clearTint();
     if (e.type === 't') {
       e.setFlipX(dx < 0);
-      if (e.st === 'patrol') { if (ad < 520 && Math.abs(P.y - e.y) < 260) { e.st = 'wind'; e.until = t + 650; } }
-      else if (e.st === 'wind') { e.setTint(0xff4444); if (t > e.until) { this.bolt(e); e.st = 'rec'; e.until = t + 1600; } }
+      if (e.st === 'patrol') { if (ad < 560 && Math.abs(P.y - e.y) < 300) { e.st = 'wind'; e.until = t + 650; } }
+      else if (e.st === 'wind') { e.setTint(0xff4444); if (t > e.until) { this.bolt(e); e.st = 'rec'; e.until = t + 1700; } }
       else if (t > e.until) e.st = 'patrol';
       return;
     }
     const mv = v => b.setVelocityX(v);
-    if (e.st === 'patrol') { mv(e.dir * 50); if (e.x > e.max) e.dir = -1; else if (e.x < e.min) e.dir = 1; e.setFlipX(e.dir < 0); if (ad < 300 && near) e.st = 'chase'; }
+    if (e.st === 'patrol') { mv(e.dir * 55); if (e.x > e.max) e.dir = -1; else if (e.x < e.min) e.dir = 1; e.setFlipX(e.dir < 0); if (ad < 320 && near) e.st = 'chase'; }
     else if (e.st === 'chase') {
-      const lim = (s > 0 && e.x >= e.max) || (s < 0 && e.x <= e.min); mv(lim ? 0 : s * 105); e.setFlipX(s < 0);
-      if (ad < 100) { e.st = 'wind'; e.until = t + 520; e.face = s; mv(0); } else if (ad > 440 || !near) e.st = 'patrol';
+      const lim = (s > 0 && e.x >= e.max) || (s < 0 && e.x <= e.min); mv(lim ? 0 : s * (g ? 85 : 115)); e.setFlipX(s < 0);
+      if (ad < 120) { e.st = 'wind'; e.until = t + (g ? 700 : 520); e.face = s; mv(0); } else if (ad > 480 || !near) e.st = 'patrol';
     }
-    else if (e.st === 'wind') { e.setTint(0xff4444); if (t > e.until) { e.st = 'atk'; e.until = t + 300; mv(e.face * TUNE.lungeSpeed); } }
+    else if (e.st === 'wind') { e.setTint(0xff4444); if (t > e.until) { e.st = 'atk'; e.until = t + 300; mv(e.face * TUNE.lungeSpeed * (g ? 0.9 : 1)); } }
     else if (e.st === 'atk') {
       if (t > e.until) { e.st = 'rec'; e.until = t + 650; mv(0); }
-      else if (hit(e.getBounds(), this.pb()) && this.hurt(t, e.x) === 'parry') { e.st = 'rec'; e.until = t + 1000; e.stun = t + 800; mv(0); }
+      else if (hit(e.getBounds(), this.pb()) && this.hurt(t, e.x) === 'parry') { e.st = 'rec'; e.until = t + (g ? 1900 : 1000); e.stun = t + (g ? 1800 : 800); mv(0); }
     }
     else { mv(0); if (t > e.until) e.st = 'chase'; }
   }
 
-  kernAnims() {
-    const A = (key, name, fps, rep = 0, frames) => {
-      if (this.anims.exists(key)) return;
-      const r = KERN.rows[name], list = frames || [...Array(KERN.n[name]).keys()];
-      this.anims.create({ key, frames: list.map(i => ({ key: 'kernsheet', frame: r * KERN.cols + i })), frameRate: fps, repeat: rep });
-    };
-    A('idle', 'idle', 5, -1); A('walk', 'walk', 10, -1); A('run', 'run', 14, -1);
-    A('jump', 'jump', 16); A('fall', 'fall', 10, -1); A('land', 'land', 24);
-    A('bash', 'bash', 22); A('dbash', 'dbash', 18, 0, [0, 1]); A('rebound', 'dbash', 14, 0, [2, 3, 4]);
-    A('up', 'shoot_up', 22, 0, [1, 2]); A('side', 'shoot_side', 22, 0, [0, 1, 2]); A('down', 'shoot_down', 20, 0, [0, 1]);
-    A('parry', 'parry', 24); A('dmg', 'dmg', 14, 0, [0, 1, 2, 3]); A('ko', 'dmg', 1, 0, [4]);
-  }
-
-  playAct(k, ms, soft) {
-    if (soft && this.act && this.now < this.act.until) return;
-    this.act = { k, until: this.now + ms }; this.vis.anims.play(k, false);
-  }
+  playAct(k, ms, soft) { if (soft && this.act && this.now < this.act.until) return; this.act = { k, until: this.now + ms }; this.vis.anims.play(k, false); }
 
   dot(x, y, col, sc = 1) {
     const d = this.add.image(x, y, 'dot').setTint(col).setScale(sc * 1.5).setAlpha(0.8).setDepth(4).setBlendMode(Phaser.BlendModes.ADD);
@@ -384,14 +418,11 @@ class Main extends Phaser.Scene {
     }
   }
 
-  hitstop(ms) {
-    if (this.menu || this.stopped) return; this.stopped = true; this.physics.pause();
-    this.time.delayedCall(ms, () => { this.stopped = false; if (!this.menu) this.physics.resume(); });
-  }
+  hitstop(ms) { if (this.menu || this.stopped) return; this.stopped = true; this.physics.pause(); this.time.delayedCall(ms, () => { this.stopped = false; if (!this.menu) this.physics.resume(); }); }
 
   pop(x, y, s, c) {
     const o = this.add.text(x, y, s, { fontFamily: 'monospace', fontSize: '12px', color: c }).setOrigin(0.5).setDepth(50);
-    this.tweens.add({ targets: o, y: y - 30, alpha: 0, duration: 800, onComplete: () => o.destroy() });
+    this.tweens.add({ targets: o, y: y - 30, alpha: 0, duration: 900, onComplete: () => o.destroy() });
   }
 
   ring(x, y, col, r0, r1, ms) {
@@ -401,16 +432,12 @@ class Main extends Phaser.Scene {
 
   showMenu() {
     const ks = Object.keys(CONFIGS);
-    this.menuT.setText(['LAST WORDS // WORKBENCH', '', ...ks.map((k, i) => (k === this.cfgKey ? '> ' : '  ') + '[' + (i + 1) + '] ' + CONFIGS[k].name.padEnd(10) + CONFIGS[k].desc), '', '[E] or [ESC] close. Choice persists through death.'].join('\n')).setVisible(true);
+    this.menuT.setText(['LAST WORDS // WORKBENCH', '', ...ks.map((k, i) => (k === this.cfgKey ? '> ' : '  ') + '[' + (i + 1) + '] ' + CONFIGS[k].name.padEnd(10) + CONFIGS[k].desc), '', '[' + KEYS.interact[0] + '] or [ESC] close. Choice persists through death.'].join('\n')).setVisible(true);
   }
 
   menuInput(close, nums) {
     const ks = Object.keys(CONFIGS);
-    nums.forEach((d, i) => {
-      if (!d) return;
-      this.cfgKey = ks[i]; this.cfg = CONFIGS[ks[i]]; this.registry.set('cfg', ks[i]);
-      this.bw = Math.min(this.bw, this.cfg.maxBW); this.gunS.setTexture('lw_' + ks[i]); this.showMenu();
-    });
+    nums.forEach((d, i) => { if (!d) return; this.cfgKey = ks[i]; this.cfg = CONFIGS[ks[i]]; this.registry.set('cfg', ks[i]); this.bw = Math.min(this.bw, this.cfg.maxBW); this.gunS.setTexture('lw_' + ks[i]); this.showMenu(); });
     if (close) { this.menu = false; this.menuT.setVisible(false); this.physics.resume(); }
   }
 }
@@ -419,5 +446,5 @@ new Phaser.Game({
   type: Phaser.AUTO, parent: 'game', width: 960, height: 540, backgroundColor: '#0a0e13', pixelArt: true,
   physics: { default: 'arcade', arcade: { gravity: { y: TUNE.gravity }, debug: false } },
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
-  scene: Main,
+  scene: [Boot, Title, Controls, Main],
 });
