@@ -13,6 +13,7 @@ const CONFIGS = {
   bay: { name: 'BAYONET', maxBW: 70, cost: 28, cd: 240, spread: 0.2, recoil: 430, shotDmg: 1, bashDmg: 2, pogo: 640, stagger: 300, life: 500, desc: '2x Bash dmg, huge pogo | wild spread, 70 BW cap' },
   pre: { name: 'PRECISION', maxBW: 100, cost: 25, cd: 480, spread: 0, recoil: 540, shotDmg: 2, bashDmg: 0.6, pogo: 480, stagger: 1200, life: 1400, desc: 'exact 2-dmg shots | weak Bash that stuns | slow fire' },
 };
+const KERN = { fw: 78, fh: 53, ay: 50, cols: 7, rows: {idle: 0, walk: 1, run: 2, jump: 3, fall: 4, land: 5, bash: 6, dbash: 7, shoot_up: 8, shoot_side: 9, shoot_down: 10, parry: 11, dmg: 12}, n: {idle: 4, walk: 6, run: 7, jump: 4, fall: 3, land: 3, bash: 4, dbash: 5, shoot_up: 4, shoot_side: 4, shoot_down: 3, parry: 4, dmg: 5} };
 const TEAL = 0x2fe0c8, MID = 0x1d2631, ORG = 0xff8a3d;
 const Rect = Phaser.Geom.Rectangle;
 const hit = (a, b) => Phaser.Geom.Intersects.RectangleToRectangle(a, b);
@@ -20,18 +21,20 @@ const hit = (a, b) => Phaser.Geom.Intersects.RectangleToRectangle(a, b);
 class Main extends Phaser.Scene {
   constructor() { super('main'); }
 
+  preload() { this.load.spritesheet('kernsheet', 'assets/kern/kern.png', { frameWidth: KERN.fw, frameHeight: KERN.fh }); }
+
   create() {
     const cam = this.cameras.main, W = 2800, H = 720, kb = this.input.keyboard;
     this.cfgKey = this.registry.get('cfg') || 'std'; this.cfg = CONFIGS[this.cfgKey];
     Object.assign(this, { bw: this.cfg.maxBW, hp: TUNE.hp, now: 0, inv: 0, hurtUntil: 0, recoilUntil: 0, shotCd: 0, bashCd: 0, parryUntil: 0, parryCd: 0,
-      coyote: 0, jbuf: 0, jumping: false, curMax: TUNE.walk, gT: 0, safe: { x: 120, y: 560 }, bashS: null, dead: false, menu: false, wantBash: false, noBw: 0, stopped: false, kick: 0, wasG: false, lastVy: 0 });
+      coyote: 0, jbuf: 0, jumping: false, curMax: TUNE.walk, gT: 0, safe: { x: 120, y: 560 }, bashS: null, dead: false, menu: false, wantBash: false, noBw: 0, stopped: false, kick: 0, wasG: false, lastVy: 0, act: null, lean: 0 });
     this.physics.world.setBounds(0, 0, W, 1200);
     cam.setBounds(0, 0, W, H).setBackgroundColor('#0a0e13');
     this.input.mouse.disableContextMenu();
     this.input.on('pointerdown', p => { if (p.rightButtonDown()) this.wantBash = true; });
     this.k = {}; for (const n in KEYS) this.k[n] = KEYS[n].map(c => kb.addKey(c));
     this.numK = ['ONE', 'TWO', 'THREE'].map(c => kb.addKey(c)); this.escK = kb.addKey('ESC');
-    this.tex(); this.level(); this.spawn(); this.makeHud();
+    this.tex(); this.kernAnims(); this.level(); this.spawn(); this.makeHud();
     cam.startFollow(this.P, true, 0.12, 0.12); cam.setFollowOffset(0, 30); cam.fadeIn(300);
   }
 
@@ -116,7 +119,8 @@ class Main extends Phaser.Scene {
 
   spawn() {
     const P = this.P = this.physics.add.sprite(120, 560, 'k_i0').setDepth(4);
-    P.body.setSize(14, 30).setOffset(2, 2).setMaxVelocity(TUNE.maxVel, 900); P.setCollideWorldBounds(true);
+    P.body.setSize(14, 30).setOffset(2, 2).setMaxVelocity(TUNE.maxVel, 900); P.setCollideWorldBounds(true); P.setVisible(false);
+    this.vis = this.add.sprite(P.x, P.y + 16, 'kernsheet', 0).setOrigin(0.5, KERN.ay / KERN.fh).setDepth(4).play('idle');
     this.head = this.add.text(0, 0, '$', { fontFamily: 'monospace', fontSize: '11px', fontStyle: 'bold', color: '#2fe0c8' }).setOrigin(0.5).setDepth(5);
     this.gunS = this.add.sprite(0, 0, 'gun_' + this.cfgKey).setOrigin(0.1, 0.5).setDepth(5);
     this.fx = this.add.graphics().setDepth(6); this.eg = this.add.graphics().setDepth(7);
@@ -155,7 +159,7 @@ class Main extends Phaser.Scene {
     if (this.dead) return;
 
     const grounded = b.blocked.down, ptr = this.input.activePointer; ptr.updateWorldPoint(cam);
-    if (grounded && !this.wasG && this.lastVy > 260) this.dust(P.x, P.y + 15, 7); this.wasG = grounded; this.lastVy = b.velocity.y;
+    if (grounded && !this.wasG && this.lastVy > 260) this.dust(P.x, P.y + 15, 7), this.playAct('land', 130, true); this.wasG = grounded; this.lastVy = b.velocity.y;
     const ay = P.y + 4, ang = Math.atan2(ptr.worldY - ay, ptr.worldX - P.x), left = Math.abs(ang) > Math.PI / 2;
     this.gT = grounded ? this.gT + delta : 0; if (this.gT > 350) this.safe = { x: P.x, y: P.y };
     if (grounded) { this.coyote = t + TUNE.coyoteMs; if (b.velocity.y >= 0) this.jumping = false; this.bw = Math.min(this.cfg.maxBW, this.bw + TUNE.bwRegenGrounded * dt); }
@@ -192,16 +196,17 @@ class Main extends Phaser.Scene {
       if (dd && !B.pogo) for (const s of this.sr.concat(this.spikes)) if (hit(r, s)) { this.pogo(B); break; }
     }
     if (t < this.parryUntil) f.lineStyle(3, TEAL, 0.9).strokeCircle(P.x, P.y, 26);
-    if (t < this.recoilUntil) { const g = this.add.image(P.x, P.y, P.texture.key).setTint(TEAL).setAlpha(0.45).setFlipX(P.flipX).setBlendMode(Phaser.BlendModes.ADD).setDepth(3); this.tweens.add({ targets: g, alpha: 0, duration: 200, onComplete: () => g.destroy() }); }
+    if (t < this.recoilUntil) { const g = this.add.image(this.vis.x, this.vis.y, 'kernsheet', this.vis.frame.name).setOrigin(this.vis.originX, this.vis.originY).setFlipX(this.vis.flipX).setAngle(this.vis.angle).setTintFill(TEAL).setAlpha(0.4).setBlendMode(Phaser.BlendModes.ADD).setDepth(3); this.tweens.add({ targets: g, alpha: 0, duration: 200, onComplete: () => g.destroy() }); }
 
     const bsw = B && t < B.until, wl = bsw && B.dir === 'h' ? B.face < 0 : left;
-    const an = grounded ? (Math.abs(b.velocity.x) > 30 && ax ? 'run' : 'idle') : (b.velocity.y < 0 ? 'jump' : 'fall');
-    P.anims.play(an, true); P.anims.timeScale = an === 'run' ? Phaser.Math.Clamp(Math.abs(b.velocity.x) / TUNE.walk, 0.6, 1.6) : 1;
-    P.setFlipX(wl).setAlpha(t < this.inv && Math.floor(t / 80) % 2 ? 0.4 : 1);
-    const bob = P.texture.key === 'k_i1' || P.texture.key === 'k_r1' ? 1 : 0;
-    let ga = ang, gl = left; this.kick = Math.max(0, this.kick - 50 * dt);
-    if (bsw) { const k = 1 - (B.until - t) / TUNE.bashMs; if (B.dir === 'd') { ga = Math.PI / 2; gl = false; } else { ga = B.face > 0 ? -1.1 + 2 * k : Math.PI + 1.1 - 2 * k; gl = B.face < 0; } }
-    this.head.setPosition(P.x, P.y - 4 + bob); this.gunS.setPosition(P.x - Math.cos(ga) * this.kick, ay + bob - Math.sin(ga) * this.kick).setRotation(ga).setFlipY(gl);
+    const spd = Math.abs(b.velocity.x);
+    const an = grounded ? (spd > 30 && ax ? (spd > TUNE.walk + 30 ? 'run' : 'walk') : 'idle') : (b.velocity.y < 0 ? 'jump' : 'fall');
+    const V = this.vis, acting = this.act && t < this.act.until;
+    if (!acting) V.anims.play(an, true);
+    V.anims.timeScale = !acting && (an === 'run' || an === 'walk') ? Phaser.Math.Clamp(spd / (an === 'run' ? TUNE.run : TUNE.walk), 0.6, 1.4) : 1;
+    this.lean -= this.lean * Math.min(1, 10 * dt);
+    V.setPosition(P.x, P.y + 16).setFlipX(wl).setAngle(this.lean).setAlpha(t < this.inv && Math.floor(t / 80) % 2 ? 0.4 : 1);
+    this.head.setVisible(false); this.gunS.setVisible(false);
 
     // world interactions
     const pb = this.pb();
@@ -238,26 +243,27 @@ class Main extends Phaser.Scene {
     if (Math.abs(dx) > 0.25) b.velocity.x = -dx * c.recoil;
     if (Math.abs(dy) > 0.25) b.velocity.y = -dy * c.recoil;
     this.recoilUntil = t + 170; this.jumping = false; this.kick = 7;
+    const el = Math.atan2(dy, Math.abs(dx)); this.playAct(el < -0.9 ? 'up' : el > 0.9 ? 'down' : 'side', 230); this.lean = Math.abs(dy) < 0.8 ? -dx * 14 : 0;
     const m = this.add.image(mx, my, 'flash').setOrigin(0, 0.5).setRotation(a).setDepth(6).setBlendMode(Phaser.BlendModes.ADD); this.tweens.add({ targets: m, scaleX: 1.6, scaleY: 0.4, alpha: 0, duration: 110, onComplete: () => m.destroy() }); this.burst(mx, my, 0xfff0b0, 4);
     this.cameras.main.shake(60, 0.003);
   }
 
   startBash(t, down, face) {
     if (t < this.bashCd || t < this.hurtUntil) return;
-    this.bashCd = t + TUNE.bashCdMs; this.bashS = { until: t + TUNE.bashMs, dir: down ? 'd' : 'h', face, hit: new Set(), pogo: false };
+    this.bashCd = t + TUNE.bashCdMs; this.bashS = { until: t + TUNE.bashMs, dir: down ? 'd' : 'h', face, hit: new Set(), pogo: false }; this.playAct(down ? 'dbash' : 'bash', 230);
     const pos = () => down ? [this.P.x, this.P.y + 20] : [this.P.x + face * 20, this.P.y];
     const s = this.add.image(...pos(), 'slash').setRotation(down ? Math.PI / 2 : (face > 0 ? 0 : Math.PI)).setScale(0.6, 0.9).setDepth(6).setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({ targets: s, scaleX: 1.15, scaleY: 1.05, alpha: 0, duration: TUNE.bashMs + 90, ease: 'Cubic.easeOut', onUpdate: () => s.setPosition(...pos()), onComplete: () => s.destroy() });
   }
 
   pogo(B) {
-    B.pogo = true; this.P.body.velocity.y = -this.cfg.pogo; this.jumping = false; this.recoilUntil = 0; this.bashCd = Math.min(this.bashCd, this.now + 120);
+    B.pogo = true; this.playAct('rebound', 420); this.P.body.velocity.y = -this.cfg.pogo; this.jumping = false; this.recoilUntil = 0; this.bashCd = Math.min(this.bashCd, this.now + 120);
     this.ring(this.P.x, this.P.y + 16, TEAL, 6, 26, 170); this.burst(this.P.x, this.P.y + 18, TEAL, 8); this.cameras.main.shake(50, 0.003);
   }
 
   tryParry(t) {
     if (t < this.parryCd || this.bw < TUNE.parryCost) return;
-    this.bw -= TUNE.parryCost; this.parryUntil = t + TUNE.parryWindowMs; this.parryCd = t + TUNE.parryCdMs;
+    this.bw -= TUNE.parryCost; this.parryUntil = t + TUNE.parryWindowMs; this.parryCd = t + TUNE.parryCdMs; this.playAct('parry', 280);
   }
 
   parryOK(t) {
@@ -268,7 +274,7 @@ class Main extends Phaser.Scene {
   hurt(t, x) {
     if (t < this.inv) return 'inv';
     if (t < this.parryUntil) { this.parryOK(t); return 'parry'; }
-    this.hp--; this.inv = t + TUNE.invMs; this.hurtUntil = t + 220;
+    this.hp--; this.inv = t + TUNE.invMs; this.hurtUntil = t + 220; this.playAct('dmg', 350);
     this.P.body.setVelocity((Math.sign(this.P.x - x) || 1) * 260, -260); this.cameras.main.shake(140, 0.007);
     if (this.hp <= 0) this.die();
     return 'hit';
@@ -281,7 +287,7 @@ class Main extends Phaser.Scene {
   }
 
   die() {
-    this.dead = true; this.P.body.setVelocity(0, 0); this.pop(this.P.x, this.P.y - 30, 'DOWN - respawning', '#ff8a3d');
+    this.dead = true; this.playAct('ko', 99999); this.P.body.setVelocity(0, 0); this.pop(this.P.x, this.P.y - 30, 'DOWN - respawning', '#ff8a3d');
     this.cameras.main.fade(500, 0, 0, 0); this.time.delayedCall(550, () => this.scene.restart());
   }
 
@@ -322,6 +328,24 @@ class Main extends Phaser.Scene {
       else if (hit(e.getBounds(), this.pb()) && this.hurt(t, e.x) === 'parry') { e.st = 'rec'; e.until = t + 1000; e.stun = t + 800; mv(0); }
     }
     else { mv(0); if (t > e.until) e.st = 'chase'; }
+  }
+
+  kernAnims() {
+    const A = (key, name, fps, rep = 0, frames) => {
+      if (this.anims.exists(key)) return;
+      const r = KERN.rows[name], list = frames || [...Array(KERN.n[name]).keys()];
+      this.anims.create({ key, frames: list.map(i => ({ key: 'kernsheet', frame: r * KERN.cols + i })), frameRate: fps, repeat: rep });
+    };
+    A('idle', 'idle', 5, -1); A('walk', 'walk', 10, -1); A('run', 'run', 14, -1);
+    A('jump', 'jump', 16); A('fall', 'fall', 10, -1); A('land', 'land', 24);
+    A('bash', 'bash', 22); A('dbash', 'dbash', 18, 0, [0, 1]); A('rebound', 'dbash', 14, 0, [2, 3, 4]);
+    A('up', 'shoot_up', 22); A('side', 'shoot_side', 22); A('down', 'shoot_down', 20);
+    A('parry', 'parry', 24); A('dmg', 'dmg', 14, 0, [0, 1, 2, 3]); A('ko', 'dmg', 1, 0, [4]);
+  }
+
+  playAct(k, ms, soft) {
+    if (soft && this.act && this.now < this.act.until) return;
+    this.act = { k, until: this.now + ms }; this.vis.anims.play(k, false);
   }
 
   dot(x, y, col, sc = 1) {
