@@ -15,11 +15,12 @@ const CONFIGS = {
   bay: { name: 'BAYONET', maxBW: 70, cost: 28, cd: 240, spread: 0.2, recoil: 480, shotDmg: 1, bashDmg: 2, pogo: 700, stagger: 300, life: 500, desc: '2x Bash dmg, huge pogo | wild spread, 70 BW cap' },
   pre: { name: 'PRECISION', maxBW: 100, cost: 25, cd: 480, spread: 0, recoil: 600, shotDmg: 2, bashDmg: 0.6, pogo: 530, stagger: 1200, life: 1400, desc: 'exact 2-dmg shots | weak Bash that stuns | slow fire' },
 };
-// Revolver is drawn only while firing. Shoulder = fixed offset from Kern's feet (source-art units, scaled by KERN.k); the arm reaches
-// from the shoulder toward the aim point, the gun's grip pivot sits in the glove and the muzzle comes from the sprite, so the gun can
-// never drift from the hand in any animation or direction.
-const GUN_S = 0.6, ARM = 12, SHO = [4, -27];
-const WEAPONS = { std: { px: 9.4, py: 23.0, tx: 46, ty: 21.5 }, pre: { px: 9.8, py: 17.0, tx: 46, ty: 19.0 }, bay: { px: 9.1, py: 24.0, tx: 46, ty: 23.0 } };
+// Revolver is drawn only while firing. The arm is baked into kern3's pointing poses: aim angle -> nearest of E / NE / SE (mirrored for the
+// left side; N reuses NE, S reuses SE) and the gun sits in that pose's glove at the TRUE aim angle, so barrel and bullet always agree.
+// dx/dy = glove position relative to Kern's feet anchor (detected from the art, not eyeballed).
+const GUN_S = 0.58, PX = 62 / 64;
+const POSES = { E: { f: 0, dx: 10.6, dy: -30.1 }, NE: { f: 1, dx: 9.6, dy: -42.2 }, SE: { f: 2, dx: 8.7, dy: -18.3 } };
+const WEAPONS = { std: { px: 9.4, py: 23.0, tx: 46, ty: 21.5 }, pre: { px: 9.8, py: 17.0, tx: 46, ty: 19.0 }, bay: { px: 9.1, py: 23.0, tx: 46, ty: 23.0 } };
 const TEAL = 0x2fe0c8, MID = 0x1d2631, ORG = 0xff8a3d, BLOCK = ['bash', 'dbash', 'rebound', 'parry', 'dmg', 'ko'];
 const Rect = Phaser.Geom.Rectangle, hit = (a, b) => Phaser.Geom.Intersects.RectangleToRectangle(a, b);
 
@@ -28,7 +29,8 @@ class Boot extends Phaser.Scene {
   preload() {
     const t = this.add.text(480, 270, 'LOADING', { fontFamily: 'monospace', fontSize: '18px', color: '#2fe0c8' }).setOrigin(0.5);
     this.load.on('progress', v => t.setText('LOADING ' + Math.round(v * 100) + '%'));
-    this.load.spritesheet('kernsheet', 'assets/kern/kern.png', { frameWidth: KERN.fw, frameHeight: KERN.fh });
+    this.load.spritesheet('kernsheet', 'assets/kern/kern.png', { frameWidth: KERN.fw, frameHeight: KERN.fh }); // painterly: bash + pogo only
+    ['idle', 'aim', 'loco'].forEach(n => this.load.spritesheet('kpx_' + n, 'assets/kern/kern_' + n + '.png', { frameWidth: 64, frameHeight: 64 })); // pixel art
     ['std', 'bay', 'pre'].forEach(k => this.load.image('lw_' + k, 'assets/weapons/lastwords_' + k + '.png'));
     this.load.audio('disc', 'assets/audio/disconnected.mp3');
   }
@@ -53,7 +55,7 @@ class Main extends Phaser.Scene {
     this.cfgKey = this.registry.get('cfg') || 'std'; this.cfg = CONFIGS[this.cfgKey];
     Object.assign(this, { bw: Math.min(this.cfg.maxBW, snap ? snap.bw : 999), hp: snap ? snap.hp : TUNE.hp, now: 0, inv: 0, hurtUntil: 0, recoilUntil: 0, shotCd: 0, bashCd: 0, parryUntil: 0, parryCd: 0,
       coyote: 0, jbuf: 0, jumping: false, curMax: TUNE.walk, gT: 0, bashS: null, dead: false, won: false, menu: false, wantBash: false, noBw: 0, stopped: false, kick: 0, wasG: false, lastVy: 0,
-      act: null, lean: 0, gunUntil: 0, faceLeft: false, cp: !!snap, picked: new Set(snap ? snap.picked : []), killed: new Set(snap ? snap.killed : []) });
+      act: null, lean: 0, barrierFlash: 0, gunUntil: 0, faceLeft: false, cp: !!snap, picked: new Set(snap ? snap.picked : []), killed: new Set(snap ? snap.killed : []) });
     this.safe = snap ? { x: snap.x, y: snap.y } : { x: 120, y: GY - 30 };
     this.physics.world.setBounds(0, 0, W, 1400); cam.setBounds(0, 0, W, H).setBackgroundColor('#0a0e13');
     this.input.mouse.disableContextMenu(); this.input.on('pointerdown', p => { if (p.rightButtonDown()) this.wantBash = true; });
@@ -94,6 +96,15 @@ class Main extends Phaser.Scene {
       const c = this.textures.createCanvas('glow', 64, 64), x = c.getContext(), r = x.createRadialGradient(32, 32, 0, 32, 32, 32);
       r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.35, 'rgba(255,255,255,0.35)'); r.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = r; x.fillRect(0, 0, 64, 64); c.refresh();
     }
+    if (!this.textures.exists('barrier')) {
+      const c = this.textures.createCanvas('barrier', 40, 84), x = c.getContext(), gr = x.createLinearGradient(0, 0, 40, 0);
+      gr.addColorStop(0, 'rgba(47,224,200,0.05)'); gr.addColorStop(1, 'rgba(47,224,200,0.45)');
+      x.fillStyle = gr; x.beginPath(); x.ellipse(4, 42, 30, 38, 0, -Math.PI / 2, Math.PI / 2); x.fill();
+      x.strokeStyle = 'rgba(190,255,248,0.95)'; x.lineWidth = 3; x.beginPath(); x.ellipse(4, 42, 30, 38, 0, -Math.PI / 2, Math.PI / 2); x.stroke();
+      x.strokeStyle = 'rgba(47,224,200,0.35)'; x.lineWidth = 1;
+      for (let y = 10; y < 76; y += 8) { x.beginPath(); x.moveTo(6, y); x.lineTo(4 + 30 * Math.sqrt(1 - ((y - 42) / 38) ** 2) - 2, y); x.stroke(); }
+      c.refresh();
+    }
     mk('bench', 64, 44, g => {
       g.fillStyle(0x10161d).fillRect(2, 24, 60, 6).fillRect(6, 30, 5, 14).fillRect(53, 30, 5, 14).fillStyle(0x2c4151).fillRect(2, 24, 60, 2);
       g.fillStyle(0x0b0f14).fillRect(10, 2, 30, 20).lineStyle(1, TEAL).strokeRect(10.5, 2.5, 29, 19); g.fillStyle(0x1f7f78).fillRect(13, 5, 24, 14).fillStyle(TEAL).fillRect(15, 8, 12, 2).fillRect(15, 12, 18, 2).fillRect(15, 15, 8, 2);
@@ -110,13 +121,12 @@ class Main extends Phaser.Scene {
   }
 
   kernAnims() {
-    const A = (key, name, fps, rep = 0, frames) => {
-      if (this.anims.exists(key)) return;
-      const r = KERN.rows[name], list = frames || [...Array(KERN.n[name]).keys()];
-      this.anims.create({ key, frames: list.map(i => ({ key: 'kernsheet', frame: r * KERN.cols + i })), frameRate: fps, repeat: rep });
-    };
-    A('idle', 'idle', 5, -1); A('walk', 'walk', 10, -1); A('run', 'run', 14, -1); A('jump', 'jump', 16); A('fall', 'fall', 10, -1); A('land', 'land', 24);
-    A('bash', 'bash', 22); A('dbash', 'dbash', 18, 0, [0, 1]); A('rebound', 'dbash', 14, 0, [2, 3, 4]); A('parry', 'parry', 24); A('dmg', 'dmg', 14, 0, [0, 1, 2, 3]); A('ko', 'dmg', 1, 0, [4]);
+    const A = (key, tex, fps, rep, list) => { if (!this.anims.exists(key)) this.anims.create({ key, frames: list.map(i => ({ key: tex, frame: i })), frameRate: fps, repeat: rep }); };
+    const L = (row, n) => [...Array(n).keys()].map(i => row * 7 + i);
+    A('idle', 'kpx_idle', 6, -1, [...Array(16).keys()]); A('walk', 'kpx_loco', 11, -1, L(0, 6)); A('run', 'kpx_loco', 15, -1, L(1, 6)); A('jump', 'kpx_loco', 16, 0, L(2, 4));
+    A('fall', 'kpx_loco', 10, -1, L(3, 3)); A('land', 'kpx_loco', 24, 0, L(4, 3)); A('dmg', 'kpx_loco', 14, 0, L(5, 4)); A('ko', 'kpx_loco', 1, 0, [5 * 7 + 4]); A('parry', 'kpx_idle', 1, 0, [10]);
+    const B = (key, name, fps, list) => { if (!this.anims.exists(key)) this.anims.create({ key, frames: list.map(i => ({ key: 'kernsheet', frame: KERN.rows[name] * KERN.cols + i })), frameRate: fps, repeat: 0 }); };
+    B('bash', 'bash', 22, [0, 1, 2, 3]); B('dbash', 'dbash', 18, [0, 1]); B('rebound', 'dbash', 14, [2, 3, 4]);
   }
 
   level() {
@@ -156,8 +166,8 @@ class Main extends Phaser.Scene {
   spawn() {
     const snap = this.registry.get('snap'), P = this.P = this.physics.add.sprite(snap ? snap.x : 120, snap ? snap.y : GY - 26, 'dot').setVisible(false);
     P.body.setSize(BODY.w, BODY.h).setMaxVelocity(TUNE.maxVel, 900); P.setCollideWorldBounds(true);
-    this.vis = this.add.sprite(P.x, P.y + BODY.h / 2, 'kernsheet', 0).setOrigin(0.5, KERN.ay / KERN.fh).setDepth(4).play('idle');
-    this.arm = this.add.graphics().setDepth(4.5); this.glove = this.add.graphics().setDepth(5.5); this.gunS = this.add.sprite(0, 0, 'lw_' + this.cfgKey).setDepth(5).setVisible(false);
+    this.vis = this.add.sprite(P.x, P.y + BODY.h / 2, 'kpx_idle', 0).setOrigin(0.5, PX).setDepth(4).play('idle');
+    this.barrier = this.add.image(0, 0, 'barrier').setBlendMode(Phaser.BlendModes.ADD).setDepth(6).setVisible(false); this.gunS = this.add.sprite(0, 0, 'lw_' + this.cfgKey).setDepth(5).setVisible(false);
     this.pl = this.add.image(P.x, P.y, 'glow').setTint(TEAL).setScale(5).setAlpha(0.1).setBlendMode(Phaser.BlendModes.ADD).setDepth(3);
     this.fx = this.add.graphics().setDepth(6); this.eg = this.add.graphics().setDepth(7);
     this.bullets = this.physics.add.group({ allowGravity: false }); this.bolts = this.physics.add.group({ allowGravity: false });
@@ -184,11 +194,16 @@ class Main extends Phaser.Scene {
     this.objT.setText(this.won ? 'EXPEDITION COMPLETE' : this.cp ? 'OBJECTIVE: climb to the EXIT (top right)' : 'OBJECTIVE: reach the CHECKPOINT, then the EXIT');
   }
 
+  aimPose(ang) {
+    const el = Math.atan2(Math.sin(ang), Math.abs(Math.cos(ang))), p = el < -0.39 ? POSES.NE : el > 0.39 ? POSES.SE : POSES.E;
+    return { ...p, left: Math.abs(ang) > Math.PI / 2 };
+  }
+
   gunGeom(ang) {
-    const V = this.vis, k = KERN.k, fl = this.faceLeft ? -1 : 1, wp = WEAPONS[this.cfgKey], left = Math.abs(ang) > Math.PI / 2;
-    const sx = V.x + SHO[0] * k * fl, sy = V.y + SHO[1] * k, reach = (ARM - this.kick) * k, hx = sx + Math.cos(ang) * reach, hy = sy + Math.sin(ang) * reach;
+    const V = this.vis, wp = WEAPONS[this.cfgKey], p = this.aimPose(ang), left = p.left, fl = left ? -1 : 1;
+    const hx = V.x + p.dx * fl - Math.cos(ang) * this.kick, hy = V.y + p.dy - Math.sin(ang) * this.kick;
     const tv = new Phaser.Math.Vector2((wp.tx - wp.px) * GUN_S, (wp.ty - wp.py) * GUN_S * (left ? -1 : 1)).rotate(ang);
-    return { sx, sy, hx, hy, mx: hx + tv.x, my: hy + tv.y, left, wp };
+    return { hx, hy, mx: hx + tv.x, my: hy + tv.y, left, wp, p };
   }
 
   update(time, delta) {
@@ -203,7 +218,7 @@ class Main extends Phaser.Scene {
 
     const grounded = b.blocked.down, ptr = this.input.activePointer, k = KERN.k, feet = P.y + BODY.h / 2;
     const ax = (dn('right') ? 1 : 0) - (dn('left') ? 1 : 0);
-    const sx = V.x + SHO[0] * k * (this.faceLeft ? -1 : 1), sy = V.y + SHO[1] * k; let ang;
+    const sx = V.x, sy = V.y - 36; let ang;
     if (T.on) ang = T.aim.on ? Math.atan2(T.aim.y, T.aim.x) : (this.faceLeft ? Math.PI : 0); else { ptr.updateWorldPoint(cam); ang = Math.atan2(ptr.worldY - sy, ptr.worldX - sx); }
     this.faceLeft = T.on ? (T.aim.on ? Math.abs(ang) > Math.PI / 2 : (ax ? ax < 0 : this.faceLeft)) : Math.abs(ang) > Math.PI / 2;
     if (grounded && !this.wasG && this.lastVy > 260) { this.dust(P.x, feet, 7); this.playAct('land', 130, true); } this.wasG = grounded; this.lastVy = b.velocity.y;
@@ -237,8 +252,7 @@ class Main extends Phaser.Scene {
       }
       if (dd && !B.pogo) for (const s of this.sr.concat(this.spikes)) if (hit(r, s)) { this.pogo(B); break; }
     }
-    if (t < this.parryUntil) f.lineStyle(3, TEAL, 0.9).strokeCircle(P.x, P.y, 34);
-    if (t < this.recoilUntil) { const g = this.add.image(V.x, V.y, 'kernsheet', V.frame.name).setOrigin(V.originX, V.originY).setFlipX(V.flipX).setAngle(V.angle).setTintFill(TEAL).setAlpha(0.4).setBlendMode(Phaser.BlendModes.ADD).setDepth(3); this.tweens.add({ targets: g, alpha: 0, duration: 200, onComplete: () => g.destroy() }); }
+    if (t < this.recoilUntil) { const g = this.add.image(V.x, V.y, V.texture.key, V.frame.name).setOrigin(V.originX, V.originY).setFlipX(V.flipX).setAngle(V.angle).setTintFill(TEAL).setAlpha(0.4).setBlendMode(Phaser.BlendModes.ADD).setDepth(3); this.tweens.add({ targets: g, alpha: 0, duration: 200, onComplete: () => g.destroy() }); }
 
     // body animation (feet-anchored art on the hidden physics body; animation never touches collision)
     const bsw = B && t < B.until, wl = bsw && B.dir === 'h' ? B.face < 0 : this.faceLeft, spd = Math.abs(b.velocity.x);
@@ -247,15 +261,16 @@ class Main extends Phaser.Scene {
     V.anims.timeScale = !acting && (an === 'run' || an === 'walk') ? Phaser.Math.Clamp(spd / (an === 'run' ? TUNE.run : TUNE.walk), 0.6, 1.4) : 1;
     this.lean -= this.lean * Math.min(1, 10 * dt);
     V.setPosition(P.x, feet).setFlipX(wl).setAngle(this.lean).setAlpha(t < this.inv && Math.floor(t / 80) % 2 ? 0.4 : 1);
-    this.pl.setPosition(P.x, P.y);
+    this.pl.setPosition(P.x, P.y); const o = V.texture.key === 'kernsheet' ? KERN.ay / KERN.fh : PX; V.setOrigin(0.5, o);
+    const bf = t < this.barrierFlash; // parry = idle pose + VIGIL barrier
+    this.barrier.setVisible(t < this.parryUntil || bf).setPosition(P.x + (this.faceLeft ? -28 : 28), P.y - 6).setFlipX(this.faceLeft).setAlpha(bf ? 1 : 0.55 + 0.25 * Math.sin(t / 25)).setScale(bf ? 1.3 : 1);
 
-    // revolver: visible only while firing, hand-anchored (see GUN constants)
+    // revolver + aim arm: only while firing (arm = kern3 pose chosen from the aim angle, gun in its glove)
     const g = this.gunGeom(ang), show = t < this.gunUntil && !(acting && BLOCK.includes(this.act.k));
-    this.kick = Math.max(0, this.kick - 40 * dt); this.arm.clear(); this.glove.clear(); this.gunS.setVisible(show);
+    this.kick = Math.max(0, this.kick - 40 * dt); this.gunS.setVisible(show);
     if (show) {
-      this.arm.lineStyle(7, 0x0b0b10).lineBetween(g.sx, g.sy, g.hx, g.hy);
+      V.anims.stop(); V.setTexture('kpx_aim', g.p.f).setOrigin(0.5, PX).setFlipX(g.left);
       this.gunS.setScale(GUN_S).setOrigin(g.wp.px / 48, g.wp.py / 48).setPosition(g.hx, g.hy).setRotation(ang).setFlipY(g.left).setAlpha(Math.min(1, (this.gunUntil - t) / 90));
-      this.glove.fillStyle(0xf2f2ee).fillCircle(g.hx, g.hy, 4.5).lineStyle(1, 0x0b0b10).strokeCircle(g.hx, g.hy, 4.5);
       if (this.cfgKey === 'pre') f.lineStyle(1, TEAL, 0.3).lineBetween(g.mx, g.my, g.mx + Math.cos(ang) * 240, g.my + Math.sin(ang) * 240);
     }
 
@@ -317,7 +332,7 @@ class Main extends Phaser.Scene {
   }
 
   parryOK(t) {
-    this.parryCd = 0; this.inv = t + 300; const P = this.P;
+    this.parryCd = 0; this.inv = t + 300; this.barrierFlash = t + 180; const P = this.P;
     this.ring(P.x, P.y, TEAL, 10, 70, 260); this.ring(P.x, P.y, 0xffffff, 6, 44, 200); this.burst(P.x, P.y, TEAL, 14); this.pop(P.x, P.y - 44, 'PARRY', '#2fe0c8'); this.cameras.main.flash(90, 47, 224, 200);
     beep(this, 880, 1760, 0.12, 'triangle', 0.12); this.time.delayedCall(70, () => beep(this, 1320, 2640, 0.14, 'triangle', 0.1)); this.hitstop(70);
   }

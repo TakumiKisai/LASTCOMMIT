@@ -17,3 +17,8 @@ Checkpoint = exact snapshot (Bandwidth, HP, pickups, kills). Dying rewinds to it
 
 ## Known gaps
 Not run in a browser by the author of this pass (syntax-checked only). Touch can't open the workbench menu yet. No temporary upgrades exist yet to snapshot.
+
+## Character art (pixel art, native 64x64 cells)
+Idle = kern2 (16 frames). Aiming = kern3 pointing poses (E / NE / SE, mirrored left; N reuses NE, S reuses SE) with the revolver in the glove, shown only while firing.
+Walk / run / jump / fall / land / damage frames were drawn from the idle sprite's palette (SpriteCook is not wired into this workflow). Parry = idle pose + teal VIGIL barrier.
+Bash and pogo still use the older painterly frames (kept unchanged, resized to match). Kern is drawn 1:1 (about 60px tall) so the pixel art stays sharp; a larger Kern would mean scaling the whole world, so for now the camera just follows him.

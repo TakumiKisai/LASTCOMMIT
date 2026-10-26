@@ -29,7 +29,7 @@ export class Title extends Phaser.Scene {
     this.dig = ['4', '0', '3'].map((c, i) => A.text(500 + (i - 1) * 42, 372, c, font(66, '#e8e2d0', 1)).setOrigin(0.5));
     this.days = A.text(500, 420, 'DAYS SINCE THE CASCADE', font(18, '#a9c7c3')).setOrigin(0.5).setLetterSpacing(2);
     A.rectangle(0, 500, 960, 40, 0x0b0f14).setOrigin(0);
-    this.kern = A.sprite(85, 500, 'kernsheet', 0).setOrigin(0.5, KERN.ay / KERN.fh).setScale(2).play('idle');
+    this.kern = A.sprite(85, 500, 'kpx_idle', 0).setOrigin(0.5, 62 / 64).setScale(2).play('idle');
     [[480, 262, 14], [260, 240, 6], [740, 330, 6]].forEach(([x, y, sc], i) => { const gl = A.image(x, y, 'glow').setTint(0x2fe0c8).setScale(sc).setAlpha(0.12).setBlendMode(Phaser.BlendModes.ADD); this.tweens.add({ targets: gl, alpha: 0.2, duration: 1800 + i * 500, yoyo: true, repeat: -1 }); });
     for (let i = 0; i < 16; i++) { const d = A.image(Phaser.Math.Between(150, 850), Phaser.Math.Between(120, 480), 'dot').setTint(0x2fe0c8).setAlpha(0.3).setBlendMode(Phaser.BlendModes.ADD); this.tweens.add({ targets: d, y: d.y - 40, alpha: 0, duration: Phaser.Math.Between(3000, 6000), repeat: -1, delay: i * 200 }); }
     this.items = ['START EXPEDITION', 'CONTROLS'].map((txt, i) => {
@@ -47,7 +47,7 @@ export class Title extends Phaser.Scene {
   start() {
     this.busy = true; beep(this, 500, 900, 0.1, 'triangle'); const k = this.kern, d3 = this.dig[2];
     k.play('run'); this.tweens.add({ targets: k, x: d3.x - 120, duration: 1300, ease: 'Sine.easeInOut', onComplete: () => {
-      k.anims.stop(); k.setFrame(KERN.rows.bash * KERN.cols); const g = this.add.graphics().setDepth(5), p = { t: 0 };
+      k.anims.stop(); k.setTexture('kpx_aim', 1); const g = this.add.graphics().setDepth(5), p = { t: 0 };
       this.tweens.add({ targets: p, t: 1, duration: 520, onUpdate: () => {
         const x0 = d3.x - 24, y0 = d3.y - 38, x1 = d3.x + 24, y1 = d3.y + 38, q = Math.min(1, p.t * 2), r = Math.max(0, p.t * 2 - 1);
         g.clear().lineStyle(5, 0xff4030).lineBetween(x0, y0, x0 + (x1 - x0) * q, y0 + (y1 - y0) * q); if (r > 0) g.lineBetween(x1, y0, x1 + (x0 - x1) * r, y0 + (y1 - y0) * r);

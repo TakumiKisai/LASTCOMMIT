@@ -1,5 +1,5 @@
 // Shared constants/helpers. Uses the global Phaser (main.js sets window.Phaser first).
-export const KERN = { fw: 110, fh: 74, ay: 70, cols: 7, k: 0.6 / 0.42, rows: { idle: 0, walk: 1, run: 2, jump: 3, fall: 4, land: 5, bash: 6, dbash: 7, shoot_up: 8, shoot_side: 9, shoot_down: 10, parry: 11, dmg: 12 }, n: { idle: 4, walk: 6, run: 7, jump: 4, fall: 3, land: 3, bash: 4, dbash: 5, shoot_up: 4, shoot_side: 4, shoot_down: 3, parry: 4, dmg: 5 } };
+export const KERN = { fw: 98, fh: 68, ay: 64, cols: 7, k: 0.545 / 0.42, rows: { idle: 0, walk: 1, run: 2, jump: 3, fall: 4, land: 5, bash: 6, dbash: 7, shoot_up: 8, shoot_side: 9, shoot_down: 10, parry: 11, dmg: 12 }, n: { idle: 4, walk: 6, run: 7, jump: 4, fall: 3, land: 3, bash: 4, dbash: 5, shoot_up: 4, shoot_side: 4, shoot_down: 3, parry: 4, dmg: 5 } };
 // [primary (rebindable), ...fixed alternates]. Parry = F: index finger on the home row, no clash with WASD/Space/Shift/K.
 export const KEYS = { left: ['A', 'LEFT'], right: ['D', 'RIGHT'], up: ['W', 'UP'], down: ['S', 'DOWN'], jump: ['SPACE'], bash: ['K'], parry: ['F'], run: ['SHIFT'], interact: ['E'], restart: ['R'] };
 const LS = 'lastcommit.keys.v1';
