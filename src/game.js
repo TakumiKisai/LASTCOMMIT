@@ -35,7 +35,7 @@ class Boot extends Phaser.Scene {
   preload() {
     const t = this.add.text(480, 270, 'LOADING', { fontFamily: 'monospace', fontSize: '18px', color: '#2fe0c8' }).setOrigin(0.5);
     this.load.on('progress', v => t.setText('LOADING ' + Math.round(v * 100) + '%'));
-    ['idle', 'aim', 'upd', 'bash', 'other'].forEach(n => this.load.spritesheet('kpx_' + n, 'assets/kern/kern_' + n + '.png', { frameWidth: 64, frameHeight: 64 })); // Kern (pixel art)
+    ['idle', 'aim', 'upd', 'bash', 'other', 'walk'].forEach(n => this.load.spritesheet('kpx_' + n, 'assets/kern/kern_' + n + '.png', { frameWidth: 64, frameHeight: 64 })); // Kern (pixel art)
     ['fragment', 'shard', 'core'].forEach(n => this.load.image('en_' + n, 'assets/enemy/' + n + '_px.png')); // CASCADE enemies, cleaned to 1:1 pixels
     ['std', 'bay', 'pre'].forEach(k => this.load.image('lw_' + k, 'assets/weapons/lastwords_' + k + '.png'));
     this.load.audio('disc', 'assets/audio/disconnected.mp3');
@@ -124,7 +124,7 @@ class Main extends Phaser.Scene {
 
   kernAnims() {
     const A = (key, tex, fps, rep, list) => { if (!this.anims.exists(key)) this.anims.create({ key, frames: list.map(i => ({ key: tex, frame: i })), frameRate: fps, repeat: rep }); };
-    A('idle', 'kpx_idle', 4, -1, IDLE_FRAMES); A('walk', 'kpx_upd', 9, -1, [0, 1, 5, 4]); A('run', 'kpx_other', 15, -1, [0, 1, 2, 3, 4, 5]);
+    A('idle', 'kpx_idle', 4, -1, IDLE_FRAMES); A('walk', 'kpx_walk', 4, -1, [2, 6, 7, 6]); // picked in the animation picker (kernwalk3 frames 2, 6, 7, 6) A('run', 'kpx_other', 15, -1, [0, 1, 2, 3, 4, 5]);
     A('jump', 'kpx_other', 14, 0, [11, 15]); A('fall', 'kpx_upd', 8, -1, [7]); A('land', 'kpx_other', 18, 0, [11, 6, 7]);
     A('bash', 'kpx_bash', 22, 0, [2, 1, 9, 3]); A('dbash', 'kpx_other', 1, 0, [13]); A('rebound', 'kpx_other', 12, 0, [14, 15]);
     A('parry', 'kpx_bash', 1, 0, [4]); A('dmg', 'kpx_other', 9, 0, [12, 10]); A('ko', 'kpx_upd', 1, 0, [10]);
