@@ -22,3 +22,9 @@ Not run in a browser by the author of this pass (syntax-checked only). Touch can
 Idle = kern2 (16 frames). Aiming = kern3 pointing poses (E / NE / SE, mirrored left; N reuses NE, S reuses SE) with the revolver in the glove, shown only while firing.
 Walk / run / jump / fall / land / damage frames were drawn from the idle sprite's palette (SpriteCook is not wired into this workflow). Parry = idle pose + teal VIGIL barrier.
 Bash and pogo still use the older painterly frames (kept unchanged, resized to match). Kern is drawn 1:1 (about 60px tall) so the pixel art stays sharp; a larger Kern would mean scaling the whole world, so for now the camera just follows him.
+
+## Update: new Kern frames + CASCADE enemies
+Kern now uses only the pixel-art sheets: idle (kern2 frames 0-3), walk (kernupd), run / land / damage / jump / dive / rebound (kernother), bash (kernbash: wind-up, palm, punch, recover),
+parry = guard stance (kernbash 4) + teal barrier. The painterly sheet and kernjump2 are no longer used. After ~8s standing still Kern plays a random taunt (TAUNTS in src/game.js).
+Enemies: Fragment (rusher), Shard (hovering 3-bolt shooter), Core (armored, parry it to stun) replace the placeholder drones; art is public/assets/enemy/*_px.png (cleaned 1:1 from the PixelLab sheets).
+Not built yet: PRISM / Memory Leak boss and the army rules (sprites are in public/assets/enemy/prism.png and memoryleak.png).

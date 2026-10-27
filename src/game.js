@@ -18,10 +18,16 @@ const CONFIGS = {
 // Revolver is drawn only while firing. The arm is baked into kern3's pointing poses: aim angle -> nearest of E / NE / SE (mirrored for the
 // left side; N reuses NE, S reuses SE) and the gun sits in that pose's glove at the TRUE aim angle, so barrel and bullet always agree.
 // dx/dy = glove position relative to Kern's feet anchor (detected from the art, not eyeballed).
+const IDLE_FRAMES = [0, 1, 2, 3]; // kern2: 4-5 blink, 6-7 tip the hat, so the idle loop stays steady (hat tip is now an occasional taunt)
+const tk = (k, tex, frames, fps) => ({ k, tex, frames, fps, ms: Math.round(frames.length / fps * 1000) + 350 });
+// Played one at a time (random) after Kern has stood completely still for ~8s, then again every 6-12s; any input cancels it.
+const TAUNTS = [tk('t_hat', 'kpx_idle', [6, 7, 7, 6], 5), tk('t_vest', 'kpx_idle', [12, 13, 13, 12], 4), tk('t_point', 'kpx_upd', [12, 12, 12], 3), tk('t_salute', 'kpx_upd', [13, 13, 13], 3),
+  tk('t_beckon', 'kpx_upd', [14, 14, 14, 14], 4), tk('t_flex', 'kpx_bash', [8, 8, 8], 3), tk('t_wave', 'kpx_bash', [13, 13, 13, 13], 4), tk('t_hatfling', 'kpx_other', [9, 9, 9], 3), tk('t_shrug', 'kpx_bash', [15, 15, 15], 3)];
+const ENEMY_SCALE = { l: 2, t: 3, g: 1 }, ENEMY_ART = { l: 'fragment', t: 'shard', g: 'core' }; // l = Fragment (rusher), t = Shard (hovering shooter), g = Core (armored)
 const GUN_S = 0.58, PX = 62 / 64;
 const POSES = { E: { f: 0, dx: 10.6, dy: -30.1 }, NE: { f: 1, dx: 9.6, dy: -42.2 }, SE: { f: 2, dx: 8.7, dy: -18.3 } };
 const WEAPONS = { std: { px: 9.4, py: 23.0, tx: 46, ty: 21.5 }, pre: { px: 9.8, py: 17.0, tx: 46, ty: 19.0 }, bay: { px: 9.1, py: 23.0, tx: 46, ty: 23.0 } };
-const TEAL = 0x2fe0c8, MID = 0x1d2631, ORG = 0xff8a3d, BLOCK = ['bash', 'dbash', 'rebound', 'parry', 'dmg', 'ko'];
+const TEAL = 0x2fe0c8, MID = 0x1d2631, ORG = 0xff8a3d, GREEN = 0x7ddc6f, BLOCK = ['bash', 'dbash', 'rebound', 'parry', 'dmg', 'ko'];
 const Rect = Phaser.Geom.Rectangle, hit = (a, b) => Phaser.Geom.Intersects.RectangleToRectangle(a, b);
 
 class Boot extends Phaser.Scene {
@@ -29,8 +35,8 @@ class Boot extends Phaser.Scene {
   preload() {
     const t = this.add.text(480, 270, 'LOADING', { fontFamily: 'monospace', fontSize: '18px', color: '#2fe0c8' }).setOrigin(0.5);
     this.load.on('progress', v => t.setText('LOADING ' + Math.round(v * 100) + '%'));
-    this.load.spritesheet('kernsheet', 'assets/kern/kern.png', { frameWidth: KERN.fw, frameHeight: KERN.fh }); // painterly: bash + pogo only
-    ['idle', 'aim', 'loco'].forEach(n => this.load.spritesheet('kpx_' + n, 'assets/kern/kern_' + n + '.png', { frameWidth: 64, frameHeight: 64 })); // pixel art
+    ['idle', 'aim', 'upd', 'bash', 'other'].forEach(n => this.load.spritesheet('kpx_' + n, 'assets/kern/kern_' + n + '.png', { frameWidth: 64, frameHeight: 64 })); // Kern (pixel art)
+    ['fragment', 'shard', 'core'].forEach(n => this.load.image('en_' + n, 'assets/enemy/' + n + '_px.png')); // CASCADE enemies, cleaned to 1:1 pixels
     ['std', 'bay', 'pre'].forEach(k => this.load.image('lw_' + k, 'assets/weapons/lastwords_' + k + '.png'));
     this.load.audio('disc', 'assets/audio/disconnected.mp3');
   }
@@ -55,7 +61,7 @@ class Main extends Phaser.Scene {
     this.cfgKey = this.registry.get('cfg') || 'std'; this.cfg = CONFIGS[this.cfgKey];
     Object.assign(this, { bw: Math.min(this.cfg.maxBW, snap ? snap.bw : 999), hp: snap ? snap.hp : TUNE.hp, now: 0, inv: 0, hurtUntil: 0, recoilUntil: 0, shotCd: 0, bashCd: 0, parryUntil: 0, parryCd: 0,
       coyote: 0, jbuf: 0, jumping: false, curMax: TUNE.walk, gT: 0, bashS: null, dead: false, won: false, menu: false, wantBash: false, noBw: 0, stopped: false, kick: 0, wasG: false, lastVy: 0,
-      act: null, lean: 0, barrierFlash: 0, gunUntil: 0, faceLeft: false, cp: !!snap, picked: new Set(snap ? snap.picked : []), killed: new Set(snap ? snap.killed : []) });
+      act: null, lean: 0, barrierFlash: 0, nextTaunt: 8000, gunUntil: 0, faceLeft: false, cp: !!snap, picked: new Set(snap ? snap.picked : []), killed: new Set(snap ? snap.killed : []) });
     this.safe = snap ? { x: snap.x, y: snap.y } : { x: 120, y: GY - 30 };
     this.physics.world.setBounds(0, 0, W, 1400); cam.setBounds(0, 0, W, H).setBackgroundColor('#0a0e13');
     this.input.mouse.disableContextMenu(); this.input.on('pointerdown', p => { if (p.rightButtonDown()) this.wantBash = true; });
@@ -69,7 +75,6 @@ class Main extends Phaser.Scene {
 
   tex() {
     const mk = (k, w, h, f) => { if (this.textures.exists(k)) return; const g = this.add.graphics(); f(g); g.generateTexture(k, w, h); g.destroy(); };
-    const U = 1.5, R = (g, x, y, w, h) => g.fillRect(Math.round(x * U), Math.round(y * U), Math.max(1, Math.round(w * U)), Math.max(1, Math.round(h * U)));
     mk('spike', 16, 12, g => { g.fillStyle(0xff5a4a).fillTriangle(0, 12, 8, 0, 16, 12).fillStyle(0xffb0a0).fillTriangle(8, 0, 10, 6, 8, 6); });
     mk('panel', 32, 32, g => { g.fillStyle(0x18212b).fillRect(0, 0, 32, 32).lineStyle(1, 0x253544).strokeRect(0.5, 0.5, 31, 31).fillStyle(0x2c4151).fillRect(3, 3, 2, 2).fillRect(27, 3, 2, 2).fillRect(3, 27, 2, 2).fillRect(27, 27, 2, 2).fillStyle(0x10171e).fillRect(8, 14, 16, 4); });
     mk('sky', 480, 540, g => {
@@ -115,18 +120,15 @@ class Main extends Phaser.Scene {
       g.fillStyle(TEAL).fillRect(10, 19, 10, 2).fillRect(10, 23, 7, 2).fillRect(10, 27, 9, 2); g.fillStyle(0x3a4a58).fillRect(8, 38, 14, 3).fillRect(8, 44, 14, 3); g.fillStyle(ORG).fillRect(13, 0, 4, 3);
     });
     mk('door', 44, 76, g => { g.fillStyle(0x10161d).fillRect(0, 0, 44, 76).fillStyle(0x0b0f14).fillRect(5, 6, 34, 70).lineStyle(2, TEAL).strokeRect(5, 6, 34, 70).fillStyle(0x1f7f78).fillRect(9, 10, 26, 66).fillStyle(TEAL).fillRect(20, 10, 4, 66).fillStyle(0x0b0f14).fillRect(0, 0, 44, 5); });
-    mk('e2', 33, 39, g => { g.fillStyle(0x2a1710); R(g, 1, 4, 20, 22); R(g, 4, 0, 4, 6); R(g, 14, 0, 4, 6); g.fillStyle(0xc9622c); R(g, 2, 5, 18, 19); g.fillStyle(ORG); R(g, 2, 5, 18, 3); g.fillStyle(0x1a0d08); R(g, 4, 10, 14, 7); g.fillStyle(0xffe9c0); R(g, 6, 12, 4, 3); R(g, 12, 12, 4, 3); g.fillStyle(0x1a0d08); R(g, 4, 22, 5, 4); R(g, 13, 22, 5, 4); });
-    mk('g2', 33, 39, g => { g.fillStyle(0x161c24); R(g, 1, 4, 20, 22); R(g, 4, 0, 4, 6); R(g, 14, 0, 4, 6); g.fillStyle(0x5d6b7a); R(g, 2, 5, 18, 19); g.fillStyle(0x93a4b5); R(g, 2, 5, 18, 3); R(g, 2, 14, 18, 2); g.fillStyle(0x0b0f14); R(g, 4, 10, 14, 5); g.fillStyle(TEAL); R(g, 6, 11, 10, 2); g.fillStyle(0x161c24); R(g, 4, 22, 5, 4); R(g, 13, 22, 5, 4); });
-    mk('t2', 36, 30, g => { g.fillStyle(0x2a1710); R(g, 0, 8, 24, 12); g.fillStyle(0xc9622c); R(g, 2, 10, 20, 8); g.fillStyle(0x2a1710); R(g, 4, 0, 16, 11); g.fillStyle(0xc9622c); R(g, 6, 2, 12, 7); g.fillStyle(0xffe9c0); R(g, 9, 4, 6, 3); g.fillStyle(ORG); R(g, 10, 12, 4, 2); });
   }
 
   kernAnims() {
     const A = (key, tex, fps, rep, list) => { if (!this.anims.exists(key)) this.anims.create({ key, frames: list.map(i => ({ key: tex, frame: i })), frameRate: fps, repeat: rep }); };
-    const L = (row, n) => [...Array(n).keys()].map(i => row * 7 + i);
-    A('idle', 'kpx_idle', 6, -1, [...Array(16).keys()]); A('walk', 'kpx_loco', 11, -1, L(0, 6)); A('run', 'kpx_loco', 15, -1, L(1, 6)); A('jump', 'kpx_loco', 16, 0, L(2, 4));
-    A('fall', 'kpx_loco', 10, -1, L(3, 3)); A('land', 'kpx_loco', 24, 0, L(4, 3)); A('dmg', 'kpx_loco', 14, 0, L(5, 4)); A('ko', 'kpx_loco', 1, 0, [5 * 7 + 4]); A('parry', 'kpx_idle', 1, 0, [10]);
-    const B = (key, name, fps, list) => { if (!this.anims.exists(key)) this.anims.create({ key, frames: list.map(i => ({ key: 'kernsheet', frame: KERN.rows[name] * KERN.cols + i })), frameRate: fps, repeat: 0 }); };
-    B('bash', 'bash', 22, [0, 1, 2, 3]); B('dbash', 'dbash', 18, [0, 1]); B('rebound', 'dbash', 14, [2, 3, 4]);
+    A('idle', 'kpx_idle', 4, -1, IDLE_FRAMES); A('walk', 'kpx_upd', 9, -1, [0, 1, 5, 4]); A('run', 'kpx_other', 15, -1, [0, 1, 2, 3, 4, 5]);
+    A('jump', 'kpx_other', 14, 0, [11, 15]); A('fall', 'kpx_upd', 8, -1, [7]); A('land', 'kpx_other', 18, 0, [11, 6, 7]);
+    A('bash', 'kpx_bash', 22, 0, [2, 1, 9, 3]); A('dbash', 'kpx_other', 1, 0, [13]); A('rebound', 'kpx_other', 12, 0, [14, 15]);
+    A('parry', 'kpx_bash', 1, 0, [4]); A('dmg', 'kpx_other', 9, 0, [12, 10]); A('ko', 'kpx_upd', 1, 0, [10]);
+    TAUNTS.forEach(t => A(t.k, t.tex, t.fps, 0, t.frames));
   }
 
   level() {
@@ -156,11 +158,11 @@ class Main extends Phaser.Scene {
     fr('f0', 420, GY - 18, 'FLUXELLE', 40, 0xff6fa8); fr('f1', 900, GY - 18, 'FLUXXIE', 50, 0xffd84a); fr('f2', 1850, GY - 18, 'FLUXELLE', 40, 0xff6fa8); fr('f3', 2200, GY - 18, 'FLUXXIE', 50, 0xffd84a);
     fr('f4', 2500, 515, 'FLUXELLE', 40, 0xff6fa8); fr('f5', 2220, 226, 'FLUXEAR', 100, 0x7dff8a); fr('f6', 3100, 226, 'FLUXXIE', 50, 0xffd84a);
     const en = (id, type, x, y, min, max) => {
-      if (this.killed.has(id)) return; const e = this.physics.add.sprite(x, y, type === 't' ? 't2' : type === 'g' ? 'g2' : 'e2');
-      Object.assign(e, { id, type, hp: type === 'g' ? 4 : TUNE.enemyHp, st: 'patrol', dir: 1, min, max, until: 0, stun: 0, face: 1 }); e.mhp = e.hp; this.enemies.add(e); if (type === 't') e.body.setImmovable(true); e.setDepth(3);
+      if (this.killed.has(id)) return; const e = this.physics.add.sprite(x, y, 'en_' + ENEMY_ART[type]).setScale(ENEMY_SCALE[type]);
+      Object.assign(e, { id, type, hp: type === 'g' ? 4 : TUNE.enemyHp, st: 'patrol', dir: 1, min, max, until: 0, stun: 0, face: 1 }); e.mhp = e.hp; this.enemies.add(e); if (type === 't') { e.body.setImmovable(true); e.body.setAllowGravity(false); } e.setDepth(3); e.body.setSize(Math.round(e.width * 0.7), Math.round(e.height * 0.7));
     };
-    en('l1', 'l', 1000, GY - 30, 720, 1240); en('l2', 'l', 1190, GY - 30, 720, 1240); en('g1', 'g', 2000, GY - 30, 1780, 2200); en('t1', 't', 2350, GY - 24);
-    en('t2', 't', 2700, 440 - 24); en('l3', 'l', 3250, 250 - 30, 3040, 3450);
+    en('l1', 'l', 1000, GY - 40, 720, 1240); en('l2', 'l', 1190, GY - 40, 720, 1240); en('g1', 'g', 2000, GY - 70, 1780, 2200); en('t1', 't', 2350, GY - 120);
+    en('t2', 't', 2700, 440 - 100); en('l3', 'l', 3250, 250 - 40, 3040, 3450);
   }
 
   spawn() {
@@ -173,7 +175,7 @@ class Main extends Phaser.Scene {
     this.bullets = this.physics.add.group({ allowGravity: false }); this.bolts = this.physics.add.group({ allowGravity: false });
     const ph = this.physics.add;
     ph.collider(P, this.solids); ph.collider(this.enemies, this.solids);
-    ph.collider(this.bullets, this.solids, b => { this.impact(b.x, b.y, TEAL); b.destroy(); }); ph.collider(this.bolts, this.solids, b => { this.impact(b.x, b.y, ORG); b.destroy(); });
+    ph.collider(this.bullets, this.solids, b => { this.impact(b.x, b.y, TEAL); b.destroy(); }); ph.collider(this.bolts, this.solids, b => { this.impact(b.x, b.y, GREEN); b.destroy(); });
     ph.overlap(this.bullets, this.enemies, (b, e) => { this.impact(b.x, b.y, TEAL); this.dmg(e, this.cfg.shotDmg, Math.sign(b.body.velocity.x), 0); b.destroy(); });
   }
 
@@ -257,11 +259,15 @@ class Main extends Phaser.Scene {
     // body animation (feet-anchored art on the hidden physics body; animation never touches collision)
     const bsw = B && t < B.until, wl = bsw && B.dir === 'h' ? B.face < 0 : this.faceLeft, spd = Math.abs(b.velocity.x);
     const an = grounded ? (spd > 30 && ax ? (spd > TUNE.walk + 30 ? 'run' : 'walk') : 'idle') : (b.velocity.y < 0 ? 'jump' : 'fall');
+    const anyInput = Object.values(K).some(l => l.some(k => k.isDown)) || (T.on ? (T.aim.on || Object.keys(T.cur).length > 0) : ptr.leftButtonDown());
+    const still = grounded && !anyInput && an === 'idle' && t > this.hurtUntil && !(this.act && !this.act.taunt && t < this.act.until);
+    if (!still) { this.nextTaunt = t + 8000; if (this.act && this.act.taunt) this.act = null; }
+    else if (t > this.nextTaunt && !(this.act && t < this.act.until)) { const tkn = Phaser.Math.RND.pick(TAUNTS); this.playAct(tkn.k, tkn.ms); this.act.taunt = true; this.nextTaunt = t + Phaser.Math.Between(6000, 12000); }
     const acting = this.act && t < this.act.until; if (!acting) V.anims.play(an, true);
     V.anims.timeScale = !acting && (an === 'run' || an === 'walk') ? Phaser.Math.Clamp(spd / (an === 'run' ? TUNE.run : TUNE.walk), 0.6, 1.4) : 1;
     this.lean -= this.lean * Math.min(1, 10 * dt);
     V.setPosition(P.x, feet).setFlipX(wl).setAngle(this.lean).setAlpha(t < this.inv && Math.floor(t / 80) % 2 ? 0.4 : 1);
-    this.pl.setPosition(P.x, P.y); const o = V.texture.key === 'kernsheet' ? KERN.ay / KERN.fh : PX; V.setOrigin(0.5, o);
+    this.pl.setPosition(P.x, P.y); V.setOrigin(0.5, PX);
     const bf = t < this.barrierFlash; // parry = idle pose + VIGIL barrier
     this.barrier.setVisible(t < this.parryUntil || bf).setPosition(P.x + (this.faceLeft ? -28 : 28), P.y - 6).setFlipX(this.faceLeft).setAlpha(bf ? 1 : 0.55 + 0.25 * Math.sin(t / 25)).setScale(bf ? 1.3 : 1);
 
@@ -283,13 +289,13 @@ class Main extends Phaser.Scene {
     });
     this.eg.clear();
     for (const e of this.enemies.getChildren().slice()) {
-      this.ai(e, t);
-      if (e.hp < e.mhp) this.eg.fillStyle(0x000000).fillRect(e.x - 14, e.y - 28, 28, 4).fillStyle(ORG).fillRect(e.x - 13, e.y - 27, 26 * e.hp / e.mhp, 2);
-      if (e.st === 'wind') this.eg.fillStyle(0xff4444).fillRect(e.x - 1, e.y - 46, 3, 9).fillRect(e.x - 1, e.y - 34, 3, 3);
+      this.ai(e, t); const top = e.y - e.displayHeight / 2;
+      if (e.hp < e.mhp) this.eg.fillStyle(0x000000).fillRect(e.x - 14, top - 12, 28, 4).fillStyle(GREEN).fillRect(e.x - 13, top - 11, 26 * e.hp / e.mhp, 2);
+      if (e.st === 'wind') this.eg.fillStyle(0xff4444).fillRect(e.x - 1, top - 32, 3, 9).fillRect(e.x - 1, top - 20, 3, 3);
     }
     for (const c of this.bolts.getChildren().slice()) {
-      this.dot(c.x, c.y, ORG, 1.4); c.rotation += 0.3;
-      if (hit(c.getBounds(), pb)) { const r = this.hurt(t, c.x); if (r !== 'inv') { this.impact(c.x, c.y, r === 'parry' ? TEAL : ORG); c.destroy(); } }
+      this.dot(c.x, c.y, GREEN, 1.4); c.rotation += 0.3;
+      if (hit(c.getBounds(), pb)) { const r = this.hurt(t, c.x); if (r !== 'inv') { this.impact(c.x, c.y, r === 'parry' ? TEAL : GREEN); c.destroy(); } }
     }
     for (const c of this.bullets.getChildren()) this.dot(c.x, c.y, TEAL, 1);
   }
@@ -374,22 +380,25 @@ class Main extends Phaser.Scene {
     e.hp -= n; if (e.type !== 't') e.body.setVelocityX(dir * 180); this.ring(e.x, e.y, 0xffffff, 6, 26, 140); this.impact(e.x, e.y, 0xffffff); if (stun > 0) this.hitstop(55); beep(this, 220, 90, 0.07, 'sawtooth', 0.06);
     if (stun >= 600 && e.st === 'wind') { e.st = 'rec'; e.until = t + stun; }
     e.stun = Math.max(e.stun, t + stun);
-    if (e.hp <= 0) { this.killed.add(e.id); this.ring(e.x, e.y, ORG, 8, 54, 300); this.burst(e.x, e.y, ORG, 14); this.hitstop(90); e.destroy(); }
+    if (e.hp <= 0) { this.killed.add(e.id); this.ring(e.x, e.y, GREEN, 8, 54, 300); this.burst(e.x, e.y, GREEN, 14); this.hitstop(90); e.destroy(); }
   }
 
-  bolt(e) {
-    const a = Math.atan2(this.P.y - e.y, this.P.x - e.x), c = this.physics.add.sprite(e.x, e.y - 4, 'bolt').setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
-    this.bolts.add(c); c.body.setSize(12, 12).setAllowGravity(false).setVelocity(Math.cos(a) * TUNE.boltSpeed, Math.sin(a) * TUNE.boltSpeed); this.time.delayedCall(4000, () => c.active && c.destroy());
+  bolt(e) { // Shard burst: 3 bolts fanned around the player
+    const a0 = Math.atan2(this.P.y - e.y, this.P.x - e.x);
+    for (const off of [-0.22, 0, 0.22]) {
+      const a = a0 + off, c = this.physics.add.sprite(e.x, e.y, 'bolt').setTint(GREEN).setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
+      this.bolts.add(c); c.body.setSize(12, 12).setAllowGravity(false).setVelocity(Math.cos(a) * TUNE.boltSpeed, Math.sin(a) * TUNE.boltSpeed); this.time.delayedCall(4000, () => c.active && c.destroy());
+    }
   }
 
   ai(e, t) {
     const P = this.P, dx = P.x - e.x, ad = Math.abs(dx), s = Math.sign(dx) || 1, b = e.body, near = Math.abs(P.y - e.y) < 110, g = e.type === 'g';
-    if (t < e.stun) { e.setTint(0x8aa0ff); if (e.type !== 't') b.velocity.x *= 0.9; return; }
+    if (t < e.stun) { e.setTintFill(0x8aa0ff); if (e.type !== 't') b.velocity.x *= 0.9; return; }
     e.clearTint();
     if (e.type === 't') {
-      e.setFlipX(dx < 0);
+      b.setVelocityY(Math.cos(t / 450) * 22); // Shards hover
       if (e.st === 'patrol') { if (ad < 560 && Math.abs(P.y - e.y) < 300) { e.st = 'wind'; e.until = t + 650; } }
-      else if (e.st === 'wind') { e.setTint(0xff4444); if (t > e.until) { this.bolt(e); e.st = 'rec'; e.until = t + 1700; } }
+      else if (e.st === 'wind') { e.setTintFill(Math.floor(t / 90) % 2 ? 0xffffff : 0xff4444); if (t > e.until) { this.bolt(e); e.st = 'rec'; e.until = t + 1700; } }
       else if (t > e.until) e.st = 'patrol';
       return;
     }
@@ -399,10 +408,10 @@ class Main extends Phaser.Scene {
       const lim = (s > 0 && e.x >= e.max) || (s < 0 && e.x <= e.min); mv(lim ? 0 : s * (g ? 85 : 115)); e.setFlipX(s < 0);
       if (ad < 120) { e.st = 'wind'; e.until = t + (g ? 700 : 520); e.face = s; mv(0); } else if (ad > 480 || !near) e.st = 'patrol';
     }
-    else if (e.st === 'wind') { e.setTint(0xff4444); if (t > e.until) { e.st = 'atk'; e.until = t + 300; mv(e.face * TUNE.lungeSpeed * (g ? 0.9 : 1)); } }
+    else if (e.st === 'wind') { e.setTintFill(Math.floor(t / 90) % 2 ? 0xffffff : 0xff4444); if (t > e.until) { e.st = 'atk'; e.until = t + 300; mv(e.face * TUNE.lungeSpeed * (g ? 0.9 : 1)); } }
     else if (e.st === 'atk') {
       if (t > e.until) { e.st = 'rec'; e.until = t + 650; mv(0); }
-      else if (hit(e.getBounds(), this.pb()) && this.hurt(t, e.x) === 'parry') { e.st = 'rec'; e.until = t + (g ? 1900 : 1000); e.stun = t + (g ? 1800 : 800); mv(0); }
+      else if (hit(new Rect(e.body.x, e.body.y, e.body.width, e.body.height), this.pb()) && this.hurt(t, e.x) === 'parry') { e.st = 'rec'; e.until = t + (g ? 1900 : 1000); e.stun = t + (g ? 1800 : 800); mv(0); }
     }
     else { mv(0); if (t > e.until) e.st = 'chase'; }
   }
