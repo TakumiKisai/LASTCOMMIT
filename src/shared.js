@@ -1,7 +1,7 @@
 // Shared constants/helpers. Uses the global Phaser (main.js sets window.Phaser first).
 export const KERN = { fw: 98, fh: 68, ay: 64, cols: 7, k: 0.545 / 0.42, rows: { idle: 0, walk: 1, run: 2, jump: 3, fall: 4, land: 5, bash: 6, dbash: 7, shoot_up: 8, shoot_side: 9, shoot_down: 10, parry: 11, dmg: 12 }, n: { idle: 4, walk: 6, run: 7, jump: 4, fall: 3, land: 3, bash: 4, dbash: 5, shoot_up: 4, shoot_side: 4, shoot_down: 3, parry: 4, dmg: 5 } };
 // [primary (rebindable), ...fixed alternates]. Parry = F: index finger on the home row, no clash with WASD/Space/Shift/K.
-export const KEYS = { left: ['A', 'LEFT'], right: ['D', 'RIGHT'], up: ['W', 'UP'], down: ['S', 'DOWN'], jump: ['SPACE'], bash: ['K'], parry: ['F'], run: ['SHIFT'], interact: ['E'], restart: ['R'] };
+export const KEYS = { left: ['A', 'LEFT'], right: ['D', 'RIGHT'], up: ['W', 'UP'], down: ['S', 'DOWN'], jump: ['SPACE'], shoot: ['J'], bash: ['K'], parry: ['F'], run: ['SHIFT'], interact: ['E'], restart: ['R'] };
 const LS = 'lastcommit.keys.v1';
 export const loadKeys = () => { try { const o = JSON.parse(localStorage.getItem(LS) || '{}'); for (const n in o) if (KEYS[n] && typeof o[n] === 'string') KEYS[n][0] = o[n]; } catch (e) { /* storage blocked */ } };
 export const saveKeys = () => { try { const o = {}; for (const n in KEYS) o[n] = KEYS[n][0]; localStorage.setItem(LS, JSON.stringify(o)); } catch (e) { /* ignore */ } };
@@ -21,3 +21,5 @@ export function playMusic(scene, key, vol = 0.5) {
   const go = () => { const c2 = sm.get(key); if (!c2 || !c2.isPlaying) sm.play(key, { loop: true, volume: vol }); };
   if (sm.locked) sm.once(Phaser.Sound.Events.UNLOCKED, go); else go();
 }
+export const getMouseAim = () => { try { return localStorage.getItem('lastcommit.mouseaim') === 'on'; } catch (e) { return false; } };
+export const setMouseAim = on => { try { localStorage.setItem('lastcommit.mouseaim', on ? 'on' : 'off'); } catch (e) { /* ignore */ } };

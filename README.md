@@ -28,3 +28,9 @@ Kern now uses only the pixel-art sheets: idle (kern2 frames 0-3), walk (kernupd)
 parry = guard stance (kernbash 4) + teal barrier. The painterly sheet and kernjump2 are no longer used. After ~8s standing still Kern plays a random taunt (TAUNTS in src/game.js).
 Enemies: Fragment (rusher), Shard (hovering 3-bolt shooter), Core (armored, parry it to stun) replace the placeholder drones; art is public/assets/enemy/*_px.png (cleaned 1:1 from the PixelLab sheets).
 Not built yet: PRISM / Memory Leak boss and the army rules (sprites are in public/assets/enemy/prism.png and memoryleak.png).
+
+## Update: keyboard aiming, floating revolver, variants (step A)
+Controls: arrows/WASD move + face + 8-way aim, J = shoot (hold), K bash, F parry, Down + Bash in the air = pogo. Facing follows movement (no moonwalking); SHOOT + Down fires straight down even on the ground.
+Mouse aim + click shoot is a disabled-by-default toggle in Controls (testing only). Straight up/down reuse the NE/SE arm poses until N/S poses exist; the gun still points at the true angle.
+LAST WORDS floats on a faint tether beside Kern's hip, snaps into his hand to fire and returns to the same spot. Variants: Kern (Standard), Soren (Precision: fast piercing shots), Vera (Impact: bash, pogo, wide parry).
+Workbench: hologram + card menu (tap or 1/2/3); 1% easter egg renames Kern to "You". Run = the walk cycle played faster. Airborne frames are re-aligned to the idle body height. Title: back-view Kern, 403 -> 404 via a 0/1 bit stream.
