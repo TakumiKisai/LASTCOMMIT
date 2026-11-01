@@ -19,6 +19,7 @@ const CONFIGS = {
 // Revolver is drawn only while firing. The arm is baked into kern3's pointing poses: aim angle -> nearest of E / NE / SE (mirrored for the
 // left side; N reuses NE, S reuses SE) and the gun sits in that pose's glove at the TRUE aim angle, so barrel and bullet always agree.
 // dx/dy = glove position relative to Kern's feet anchor (detected from the art, not eyeballed).
+const RUN_FPS = 12; // run = the 4-frame walk (kernwalk3 2,6,7,6) played faster; raise or lower to taste (walk is 4 fps)
 const IDLE_FRAMES = [0, 1, 2, 3]; // kern2: 4-5 blink, 6-7 tip the hat, so the idle loop stays steady (hat tip is now an occasional taunt)
 const tk = (k, tex, frames, fps) => ({ k, tex, frames, fps, ms: Math.round(frames.length / fps * 1000) + 350 });
 // Played one at a time (random) after Kern has stood completely still for ~8s, then again every 6-12s; any input cancels it.
@@ -125,7 +126,7 @@ class Main extends Phaser.Scene {
 
   kernAnims() {
     const A = (key, tex, fps, rep, list) => { if (!this.anims.exists(key)) this.anims.create({ key, frames: list.map(i => ({ key: tex, frame: i })), frameRate: fps, repeat: rep }); };
-    A('idle', 'kpx_idle', 4, -1, IDLE_FRAMES); A('walk', 'kpx_walk', 4, -1, [2, 6, 7, 6]); A('run', 'kpx_walk', 10, -1, [2, 6, 7, 6]); // run = the walk, faster
+    A('idle', 'kpx_idle', 4, -1, IDLE_FRAMES); A('walk', 'kpx_walk', 4, -1, [2, 6, 7, 6]); A('run', 'kpx_walk', RUN_FPS, -1, [2, 6, 7, 6]);
     A('jump', 'kpx_air', 8, 0, [0, 1]); A('fall', 'kpx_air', 1, 0, [2]); A('land', 'kpx_other', 18, 0, [11, 6, 7]); // kpx_air frames are body-centre aligned to the idle pose
     A('bash', 'kpx_bash', 22, 0, [2, 1, 9, 3]); A('dbash', 'kpx_air', 1, 0, [3]); A('rebound', 'kpx_air', 12, 0, [4, 1]);
     A('parry', 'kpx_bash', 1, 0, [4]); A('dmg', 'kpx_air', 9, 0, [5, 6]); A('ko', 'kpx_upd', 1, 0, [10]);
@@ -275,7 +276,7 @@ class Main extends Phaser.Scene {
     V.anims.timeScale = !acting && (an === 'run' || an === 'walk') ? Phaser.Math.Clamp(spd / (an === 'run' ? TUNE.run : TUNE.walk), 0.6, 1.4) : 1;
     this.lean -= this.lean * Math.min(1, 10 * dt);
     V.setPosition(P.x, feet).setFlipX(wl).setAngle(this.lean).setAlpha(t < this.inv && Math.floor(t / 80) % 2 ? 0.4 : 1);
-    this.pl.setPosition(P.x, P.y); V.setOrigin(0.5, PX);
+    this.pl.setPosition(P.x, P.y); V.setOrigin(0.5, V.texture.key === 'kpx_run' ? 78 / 80 : PX);
     const bf = t < this.barrierFlash; // parry = idle pose + VIGIL barrier
     this.barrier.setVisible(t < this.parryUntil || bf).setPosition(P.x + (this.faceLeft ? -28 : 28), P.y - 6).setFlipX(this.faceLeft).setAlpha(bf ? 1 : 0.55 + 0.25 * Math.sin(t / 25)).setScale(bf ? 1.3 : 1);
 

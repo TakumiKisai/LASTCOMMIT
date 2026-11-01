@@ -34,3 +34,5 @@ Controls: arrows/WASD move + face + 8-way aim, J = shoot (hold), K bash, F parry
 Mouse aim + click shoot is a disabled-by-default toggle in Controls (testing only). Straight up/down reuse the NE/SE arm poses until N/S poses exist; the gun still points at the true angle.
 LAST WORDS floats on a faint tether beside Kern's hip, snaps into his hand to fire and returns to the same spot. Variants: Kern (Standard), Soren (Precision: fast piercing shots), Vera (Impact: bash, pogo, wide parry).
 Workbench: hologram + card menu (tap or 1/2/3); 1% easter egg renames Kern to "You". Run = the walk cycle played faster. Airborne frames are re-aligned to the idle body height. Title: back-view Kern, 403 -> 404 via a 0/1 bit stream.
+
+Run: the 4-frame walk (kernwalk3 2,6,7,6) played faster; set RUN_FPS in src/game.js. The kernrun1 cycle is kept in public/assets/kern/kern_run.png (80x80 cells) but is unused.
